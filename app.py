@@ -18,23 +18,35 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. SESSION STATE ---
+# --- 1. INITIALIZE SESSION STATE ---
 if 'master_df' not in st.session_state:
     st.session_state['master_df'] = pd.DataFrame()
 
-# --- 2. DATABASES & HELPERS ---
-STANDARD_LOFTS = {
+# Default Standard Lofts
+DEFAULT_LOFTS = {
     'Driver': 10.5, '3 Wood': 15.0, '5 Wood': 18.0, 'Hybrid': 21.0,
     '3 Iron': 21.0, '4 Iron': 24.0, '5 Iron': 27.0, '6 Iron': 30.0,
     '7 Iron': 34.0, '8 Iron': 38.0, '9 Iron': 42.0, 'PW': 46.0,
     'GW': 50.0, 'SW': 54.0, 'LW': 58.0
 }
 
-def get_dynamic_ranges(club_name, handicap, user_loft=None):
+# Initialize My Bag in Session State if not present
+if 'my_bag' not in st.session_state:
+    st.session_state['my_bag'] = DEFAULT_LOFTS.copy()
+
+# --- 2. DATABASES & HELPERS ---
+
+def get_dynamic_ranges(club_name, handicap):
+    """
+    Now pulls loft directly from the User's Bag Configuration.
+    """
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
-    target_loft = user_loft if user_loft else STANDARD_LOFTS.get(club_name, 30.0)
+    
+    # LOOKUP USER LOFT
+    # Try exact match, then fuzzy match, then default
+    user_loft = st.session_state['my_bag'].get(club_name, 30.0)
 
     if 'driver' in c_lower:
         aoa = (-2.0 - (tolerance*0.2), 5.0 + (tolerance*0.2)) 
@@ -42,16 +54,16 @@ def get_dynamic_ranges(club_name, handicap, user_loft=None):
         spin = (1800, 2800 + (handicap * 40))
     elif 'wood' in c_lower or 'hybrid' in c_lower:
         aoa = (-4.0, 1.0 + tolerance)
-        l_center = target_loft * 0.7 
+        l_center = user_loft * 0.7 
         launch = (l_center - 2.0, l_center + 2.0 + launch_help)
-        spin = (target_loft * 200, target_loft * 280)
+        spin = (user_loft * 200, user_loft * 280)
     else:
-        target_aoa = -1.0 - (target_loft / 12.0)
+        target_aoa = -1.0 - (user_loft / 12.0)
         aoa = (target_aoa - 2.0 - tolerance, -0.5)
-        l_min = (target_loft * 0.45) - 1.0
-        l_max = (target_loft * 0.55) + 1.0 + launch_help
+        l_min = (user_loft * 0.45) - 1.0
+        l_max = (user_loft * 0.55) + 1.0 + launch_help
         launch = (l_min - tolerance, l_max + tolerance)
-        s_base = target_loft * 210
+        s_base = user_loft * 210
         spin = (s_base - 1000 - (tolerance*100), s_base + 1000 + (tolerance*100))
 
     return aoa, launch, spin
@@ -87,8 +99,6 @@ def clean_mevo_data(df, filename, selected_date):
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
     
-    # --- ALTITUDE NORMALIZATION ---
-    # Parse Altitude
     if 'Altitude (ft)' not in df_clean.columns:
         df_clean['Altitude (ft)'] = 0.0
     else:
@@ -96,7 +106,6 @@ def clean_mevo_data(df, filename, selected_date):
         df_clean['Altitude (ft)'] = pd.to_numeric(df_clean['Altitude (ft)'], errors='coerce').fillna(0.0)
 
     # Calculate Sea Level Carry (Normalize)
-    # Approx 1.1% gain per 1000ft. So SL = Actual / (1 + (Alt/1000 * 0.011))
     df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
 
@@ -120,8 +129,8 @@ def filter_outliers(df):
         df_filtered = pd.concat([df_filtered, valid])
     return df_filtered, outlier_count
 
-def check_range(club_name, value, metric_idx, handicap, user_loft):
-    ranges = get_dynamic_ranges(club_name, handicap, user_loft) 
+def check_range(club_name, value, metric_idx, handicap):
+    ranges = get_dynamic_ranges(club_name, handicap) 
     min_v, max_v = ranges[metric_idx]
     if min_v <= value <= max_v:
         return "Optimal ✅", "normal"
@@ -179,22 +188,36 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # SUMMARY STATS (Moved here from Trophy Room)
-    if not st.session_state['master_df'].empty:
-        st.subheader("📊 Statistics")
-        tot_shots = len(st.session_state['master_df'])
-        tot_sess = st.session_state['master_df']['Date'].nunique()
+    # --- MY BAG CONFIG ---
+    st.header("3. My Bag Setup")
+    with st.expander("⚙️ Configure Club Lofts"):
+        st.info("Set your specific lofts here. The app will use these to calculate optimal launch & spin.")
         
-        c_s1, c_s2 = st.columns(2)
-        c_s1.markdown(f"<div class='stat-box'><b>Shots</b><br><span style='font-size:20px; color:#4DD0E1'>{tot_shots}</span></div>", unsafe_allow_html=True)
-        c_s2.markdown(f"<div class='stat-box'><b>Sessions</b><br><span style='font-size:20px; color:#FF4081'>{tot_sess}</span></div>", unsafe_allow_html=True)
-
+        # Convert dictionary to DataFrame for editing
+        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
+        edited_bag = st.data_editor(bag_df, num_rows="dynamic", hide_index=True)
+        
+        # Update Session State from Editor
+        if not edited_bag.empty:
+            updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
+            st.session_state['my_bag'] = updated_dict
+            
+    # --- PLAYER CONFIG ---
     st.markdown("---")
-    st.header("3. Player Config")
+    st.header("4. Player Config")
     env_mode = st.radio("Filter:", ["All", "Outdoor Only", "Indoor Only"], index=0)
     handicap = st.number_input("Handicap", 0, 54, 15)
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
+
+    # SUMMARY STATS
+    if not st.session_state['master_df'].empty:
+        st.markdown("---")
+        tot_shots = len(st.session_state['master_df'])
+        tot_sess = st.session_state['master_df']['Date'].nunique()
+        c_s1, c_s2 = st.columns(2)
+        c_s1.markdown(f"<div class='stat-box'><b>Shots</b><br><span style='font-size:20px; color:#4DD0E1'>{tot_shots}</span></div>", unsafe_allow_html=True)
+        c_s2.markdown(f"<div class='stat-box'><b>Sessions</b><br><span style='font-size:20px; color:#FF4081'>{tot_sess}</span></div>", unsafe_allow_html=True)
 
 # --- 4. MAIN APP LOGIC ---
 master_df = st.session_state['master_df']
@@ -221,48 +244,31 @@ if not master_df.empty:
     # --- TABS ---
     tab_bag, tab_acc, tab_gap, tab_time, tab_mech, tab_comp = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Ranges", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare"])
 
-    # ================= TAB: MY BAG (NEW) =================
+    # ================= TAB: MY BAG =================
     with tab_bag:
         st.subheader("🎒 My Bag & Yardages")
         
-        # 1. Altitude Adjuster
         col_set1, col_set2 = st.columns([1, 3])
         with col_set1:
             play_alt = st.number_input("⛰️ Play Altitude (ft)", value=0, step=500, 
                                       help="Set this to the altitude of the course you are playing to see adjusted yardages.")
             
-            # Altitude Factor: (1 + (Alt/1000 * 0.011))
             alt_factor = 1 + (play_alt / 1000.0 * 0.011)
             if play_alt > 0:
                 st.caption(f"Projecting distance boost: +{((alt_factor-1)*100):.1f}%")
 
-        # 2. Calculate Bag Data
-        # We group by club and calculate stats based on Sea Level (SL) data, then project
         bag_stats = filtered_df.groupby('club').agg({
             'SL_Carry': 'mean',
             'SL_Total': 'mean',
             'Ball (mph)': 'mean',
-            'Carry (yds)': 'max' # Raw Max Carry for Personal Best
+            'Carry (yds)': 'max' 
         }).rename(columns={'Carry (yds)': 'Max Carry (Raw)'})
         
-        # Sort by distance
         bag_stats = bag_stats.sort_values('SL_Carry', ascending=False)
-        
-        # Apply Projection to Averages
         bag_stats['Adj. Carry'] = bag_stats['SL_Carry'] * alt_factor
         bag_stats['Adj. Total'] = bag_stats['SL_Total'] * alt_factor
         
-        # Formatting for Display
-        display_bag = pd.DataFrame()
-        display_bag['Club'] = bag_stats.index
-        display_bag['Avg Carry'] = bag_stats['Adj. Carry'].map('{:.1f}'.format)
-        display_bag['Avg Total'] = bag_stats['Adj. Total'].map('{:.1f}'.format)
-        display_bag['Ball Speed'] = bag_stats['Ball (mph)'].map('{:.1f}'.format)
-        display_bag['Max Carry (Raw)'] = bag_stats['Max Carry (Raw)'].map('{:.1f}'.format)
-        
-        # 3. Display Grid of Cards
         st.write("---")
-        # Use columns to create a grid layout
         cols = st.columns(4)
         for i, (index, row) in enumerate(bag_stats.iterrows()):
             with cols[i % 4]:
@@ -334,7 +340,7 @@ if not master_df.empty:
     # ================= TAB: GAPPING =================
     with tab_gap:
         if len(filtered_df) > 0:
-            st.subheader("📏 Ranges (Box Plot)")
+            st.subheader("🎒 Bag Gapping")
             means = filtered_df.groupby("club")["Carry (yds)"].mean().sort_values(ascending=False)
             fig = px.box(filtered_df, x='club', y='Carry (yds)', color='club', category_orders={'club': means.index}, points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
@@ -360,26 +366,23 @@ if not master_df.empty:
     with tab_mech:
         if len(filtered_df) > 0:
             st.subheader("🔬 Swing Mechanics")
-            c_sel1, c_sel2 = st.columns([2,1])
-            with c_sel1: mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
-            with c_sel2: 
-                def_loft = STANDARD_LOFTS.get(mech_club, 34.0)
-                user_loft = st.number_input("Reference Loft (°)", value=def_loft, step=0.5)
+            # Pull Loft from Global Bag
+            mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
             
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
             col_m1, col_m2, col_m3 = st.columns(3)
             if 'AOA (°)' in mech_data.columns:
                 val_aoa = mech_data['AOA (°)'].mean()
-                delta_txt, delta_col = check_range(mech_club, val_aoa, 0, handicap, user_loft) 
+                delta_txt, delta_col = check_range(mech_club, val_aoa, 0, handicap) 
                 col_m1.metric("Angle of Attack", f"{val_aoa:.1f}°", delta=delta_txt, delta_color=delta_col)
             if 'Launch V (°)' in mech_data.columns:
                 val_launch = mech_data['Launch V (°)'].mean()
-                delta_txt, delta_col = check_range(mech_club, val_launch, 1, handicap, user_loft)
+                delta_txt, delta_col = check_range(mech_club, val_launch, 1, handicap)
                 col_m2.metric("Launch Angle", f"{val_launch:.1f}°", delta=delta_txt, delta_color=delta_col)
             if 'Spin (rpm)' in mech_data.columns:
                 val_spin = mech_data['Spin (rpm)'].mean()
-                delta_txt, delta_col = check_range(mech_club, val_spin, 2, handicap, user_loft)
+                delta_txt, delta_col = check_range(mech_club, val_spin, 2, handicap)
                 col_m3.metric("Spin Rate", f"{val_spin:.0f} rpm", delta=delta_txt, delta_color=delta_col)
 
             st.markdown("---")
@@ -471,4 +474,4 @@ else:
         st.markdown('<div class="feature-card"><h3>📈 Historical Trends</h3><p style="color:#888">Track ball speed, accuracy, and consistency improvements over time.</p></div>', unsafe_allow_html=True)
 
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.info("👈 **Get Started:** Open the Sidebar to **Add a New Session** or **Restore your Database**.")
+    st.info("👈 **Get Started:** Open the Sidebar to **Configure Your Bag** and **Add a New Session**.")
