@@ -15,6 +15,7 @@ st.markdown("""
     h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
     .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
     .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
+    .faq-box { background-color: #262730; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4DD0E1; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -202,16 +203,12 @@ with st.sidebar:
     # --- MY BAG CONFIG ---
     st.header("3. My Bag Setup")
     with st.expander("⚙️ Configure Club Lofts"):
-        st.info("Set your lofts here. Changes save automatically.")
+        st.info("Set your lofts here. They will be saved when you download your database.")
         
-        # 1. Convert Dictionary to DataFrame
         bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
-        
-        # 2. Smart Sort (Driver -> Wedges) instead of Alphabetical
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
         
-        # 3. Editor (No Callback needed now, simpler logic)
         edited_bag = st.data_editor(
             bag_df, 
             num_rows="dynamic", 
@@ -219,8 +216,7 @@ with st.sidebar:
             key='bag_editor'
         )
         
-        # 4. Immediate Sync Logic
-        # This runs every time the script reruns (which happens on edit)
+        # Immediate Sync
         updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
         if updated_dict != st.session_state['my_bag']:
             st.session_state['my_bag'] = updated_dict
@@ -265,7 +261,7 @@ if not master_df.empty:
     st.caption(f"Analyzing {len(filtered_df)} shots")
 
     # --- TABS ---
-    tab_bag, tab_acc, tab_gap, tab_time, tab_mech, tab_comp = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Ranges", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare"])
+    tab_bag, tab_acc, tab_gap, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Ranges", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
     # ================= TAB: MY BAG =================
     with tab_bag:
@@ -314,9 +310,7 @@ if not master_df.empty:
     # ================= TAB: ACCURACY =================
     with tab_acc:
         if len(filtered_df) > 0:
-            # Sort selector by custom order
             avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
-            # Add any weird clubs not in list to end
             extra_clubs = [c for c in filtered_df['club'].unique() if c not in CLUB_SORT_ORDER]
             final_club_order = avail_clubs + extra_clubs
             
@@ -372,10 +366,8 @@ if not master_df.empty:
     with tab_gap:
         if len(filtered_df) > 0:
             st.subheader("🎒 Bag Gapping")
-            # Apply Custom Sort to Box Plot
             filtered_df['SortIndex'] = filtered_df['club'].map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
             filtered_df_sorted = filtered_df.sort_values('SortIndex')
-            
             fig = px.box(filtered_df_sorted, x='club', y='Carry (yds)', color='club', points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
 
@@ -384,7 +376,6 @@ if not master_df.empty:
         if len(filtered_df) > 0:
             st.subheader("📈 Timeline")
             c_t1, c_t2 = st.columns(2)
-            # Use Sorted Club List
             avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
             
             with c_t1: t_club = st.selectbox("Club", avail_clubs, key='t_club')
@@ -430,7 +421,6 @@ if not master_df.empty:
             st.markdown("---")
             col_chart_m1, col_chart_m2 = st.columns([2, 1])
             with col_chart_m1:
-                # Trajectory Window
                 if 'Height (ft)' in mech_data.columns:
                     st.markdown("#### ✈️ Trajectory Window (Height vs Carry)")
                     fig_traj = px.scatter(mech_data, x='Carry (yds)', y='Height (ft)', color='Session',
@@ -495,6 +485,40 @@ if not master_df.empty:
                 st.plotly_chart(style_fig(fig_hist), use_container_width=True)
             else: st.warning("Select different sessions.")
         else: st.warning("Need 2+ sessions.")
+
+    # ================= TAB: FAQ =================
+    with tab_faq:
+        st.subheader("❓ FAQ & Help")
+        
+        with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=True):
+            st.markdown("""
+            **The Problem:** Sometimes the radar misreads a shot (e.g., a 'ghost' 400-yard 7-iron) or you duff one 20 yards. These mess up your averages.
+            
+            **The Solution:** We use the **IQR (Interquartile Range)** method:
+            1. We calculate the middle 50% of your shots.
+            2. We remove any shot that is exceedingly far outside that range (statistical anomalies).
+            3. This gives you a 'True Average' of your *solid* strikes.
+            """)
+            
+        with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=True):
+            st.markdown("""
+            **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).
+            
+            **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot. 
+            * We apply a correction factor of approx **1.1% per 1,000 ft**.
+            * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
+            * The app strips away that 6% bonus so you can compare your "Denver 7-iron" to your "Florida 7-iron" fairly.
+            """)
+        
+        with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=True):
+            st.markdown("""
+            **Context:** A '7-Iron' isn't a standard unit of measurement.
+            * A modern 'Game Improvement' 7-iron might be **28°**.
+            * A traditional 'Blade' 7-iron might be **34°**.
+            
+            **The App:** To tell you if your Launch Angle is "Optimal" or "Too Low," the app needs to know the loft of the club you are holding. 
+            Setting this once ensures the 'Swing Mechanics' tab gives you accurate advice.
+            """)
 
 else:
     # --- HOMEGROWN WELCOME PAGE ---
