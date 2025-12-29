@@ -29,8 +29,7 @@ st.markdown("""
         color: #FAFAFA !important;
     }
 
-    /* 3. FIX PLAYER CONFIG INPUTS (Sliders, Number Inputs) */
-    /* Input backgrounds */
+    /* 3. FIX PLAYER CONFIG INPUTS */
     section[data-testid="stSidebar"] input {
         background-color: #262730 !important;
         color: #FAFAFA !important;
@@ -44,9 +43,8 @@ st.markdown("""
     }
 
     /* 4. FIX FILE UPLOADER (The White Box Issue) */
-    /* Target the dropzone container specifically */
     section[data-testid="stSidebar"] [data-testid='stFileUploader'] section {
-        background-color: #262730 !important; /* Dark Grey Background */
+        background-color: #262730 !important;
         border: 1px dashed #4DD0E1 !important;
     }
     /* Force text inside uploader to be white */
@@ -62,7 +60,7 @@ st.markdown("""
         border: 1px solid #4DD0E1 !important;
     }
 
-    /* 5. REDESIGNED STATS BOX (Shots/Sessions) */
+    /* 5. REDESIGNED STATS BOX */
     .stat-card-container {
         display: flex;
         gap: 10px;
@@ -91,23 +89,36 @@ st.markdown("""
         letter-spacing: 1px;
     }
 
-    /* 6. GENERAL UI IMPROVEMENTS */
-    div[data-testid="stExpander"] {
-        background-color: #1E222B !important;
-        border: 1px solid #444;
+    /* 6. TAB VISIBILITY FIXES */
+    /* Unselected Tabs -> Bright Grey */
+    div[data-testid="stTabs"] button[aria-selected="false"] {
+        color: #B0B3B8 !important;
+        font-weight: 500;
+    }
+    div[data-testid="stTabs"] button[aria-selected="false"]:hover {
+        color: #4DD0E1 !important;
+    }
+    /* Selected Tab -> White */
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: #FAFAFA !important;
+        border-top-color: #4DD0E1 !important;
+    }
+
+    /* 7. METRIC LABEL FIXES (The small text above numbers) */
+    div[data-testid="stMetricLabel"] label {
+        color: #B0B3B8 !important; /* Force light grey */
+    }
+    div[data-testid="stMetricValue"] {
+        color: #4DD0E1 !important; /* Force numbers cyan */
+    }
+
+    /* 8. GENERAL INPUT LABELS (Selectbox, etc in main area) */
+    .stSelectbox label, .stNumberInput label {
         color: #FAFAFA !important;
     }
-    div[data-testid="stExpander"] summary p {
-        color: #FAFAFA !important; 
-        font-weight: 600;
-    }
-    .feature-card { 
-        background-color: #1E222B; 
-        padding: 20px; 
-        border-radius: 10px; 
-        text-align: center; 
-        border: 1px solid #333; 
-    }
+
+    /* Custom Cards */
+    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
