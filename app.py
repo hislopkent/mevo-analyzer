@@ -34,6 +34,13 @@ DEFAULT_LOFTS = {
 if 'my_bag' not in st.session_state:
     st.session_state['my_bag'] = DEFAULT_LOFTS.copy()
 
+# CALLBACK: Updates bag immediately when editor changes
+def update_my_bag():
+    """Syncs the data editor changes back to the my_bag dictionary immediately."""
+    edited_df = st.session_state['bag_editor']
+    # Convert DF back to dictionary
+    st.session_state['my_bag'] = dict(zip(edited_df['Club'], edited_df['Loft']))
+
 # --- 2. DATABASES & HELPERS ---
 
 def get_dynamic_ranges(club_name, handicap):
@@ -41,7 +48,7 @@ def get_dynamic_ranges(club_name, handicap):
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
     
-    # LOOKUP USER LOFT from Session State
+    # LOOKUP USER LOFT
     user_loft = st.session_state['my_bag'].get(club_name, 30.0)
 
     if 'driver' in c_lower:
@@ -152,13 +159,11 @@ with st.sidebar:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
                     
-                    # --- NEW: RESTORE BAG CONFIG ---
-                    # Check if 'Ref Loft' exists in file, update My Bag with latest values
+                    # RESTORE BAG CONFIG
                     if 'Ref Loft' in restored.columns:
                         latest_lofts = restored.drop_duplicates('club', keep='last').set_index('club')['Ref Loft'].to_dict()
-                        # Update bag, but keep defaults if not found
                         st.session_state['my_bag'].update(latest_lofts)
-                        st.toast("Bag Lofts Restored from Database!", icon="🎒")
+                        st.toast("Bag Lofts Restored!", icon="🎒")
                     
                     st.session_state['master_df'] = restored
                     st.success(f"Restored {len(restored)} shots!")
@@ -183,18 +188,14 @@ with st.sidebar:
                 try:
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
-                    
-                    # --- NEW: INJECT BAG LOFTS INTO DATA ---
-                    # Map the current loft to each row so it is saved forever
+                    # INJECT BAG LOFTS
                     clean['Ref Loft'] = clean['club'].map(st.session_state['my_bag'])
-                    
                     new_data.append(clean)
                 except Exception as e: st.error(f"Error {f.name}: {e}")
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
-                # Fill NaN lofts if a new club was added that isn't in default bag
+                # Fill NaN lofts if a new club was added
                 batch_df['Ref Loft'] = batch_df['Ref Loft'].fillna(30.0)
-                
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
                 st.success(f"Added {len(batch_df)} shots!")
                 st.rerun()
@@ -204,14 +205,19 @@ with st.sidebar:
     # --- MY BAG CONFIG ---
     st.header("3. My Bag Setup")
     with st.expander("⚙️ Configure Club Lofts"):
-        st.info("Set your lofts here. They will be saved when you download your database.")
+        st.info("Set your lofts here. They are saved automatically.")
         
-        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
-        edited_bag = st.data_editor(bag_df, num_rows="dynamic", hide_index=True, key='bag_editor')
+        # Prepare DataFrame (Sorted for stability)
+        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft']).sort_values('Club')
         
-        if not edited_bag.empty:
-            updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
-            st.session_state['my_bag'] = updated_dict
+        # Editor with Callback
+        st.data_editor(
+            bag_df, 
+            num_rows="dynamic", 
+            hide_index=True, 
+            key='bag_editor', 
+            on_change=update_my_bag
+        )
             
     # --- PLAYER CONFIG ---
     st.markdown("---")
@@ -380,7 +386,6 @@ if not master_df.empty:
             c_sel1, c_sel2 = st.columns([2,1])
             with c_sel1: mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
             with c_sel2: 
-                # Display the current loft being used (read-only info)
                 curr_loft = st.session_state['my_bag'].get(mech_club, 30.0)
                 st.metric("Bag Loft", f"{curr_loft}°")
 
