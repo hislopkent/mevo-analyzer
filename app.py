@@ -18,25 +18,71 @@ st.markdown("""
 
 st.title("⛳ Mevo+ Pro Analytics")
 
-# --- 1. OPTIMAL RANGES DATABASE (Tour Averages) ---
-# Format: Club: (Min AoA, Max AoA), (Min Launch, Max Launch), (Min Spin, Max Spin)
-OPTIMAL_RANGES = {
-    'Driver':  ((0.0, 5.0),   (10.0, 16.0), (1800, 2800)),
-    '3 Wood':  ((-2.0, 0.0),  (9.0, 13.0),  (3000, 4000)),
-    '5 Wood':  ((-3.0, -1.0), (10.0, 14.0), (3500, 4500)),
-    'Hybrid':  ((-3.0, -1.0), (11.0, 15.0), (4000, 5000)),
-    '3 Iron':  ((-3.0, -1.0), (10.0, 14.0), (4000, 5000)),
-    '4 Iron':  ((-4.0, -2.0), (11.0, 15.0), (4500, 5500)),
-    '5 Iron':  ((-4.0, -2.0), (12.0, 16.0), (5000, 6000)),
-    '6 Iron':  ((-5.0, -3.0), (14.0, 18.0), (5500, 6500)),
-    '7 Iron':  ((-5.0, -3.0), (16.0, 20.0), (6000, 7000)),
-    '8 Iron':  ((-5.0, -3.0), (18.0, 22.0), (7000, 8000)),
-    '9 Iron':  ((-6.0, -4.0), (20.0, 24.0), (8000, 9000)),
-    'PW':      ((-6.0, -4.0), (24.0, 28.0), (8500, 9500)),
-    'GW':      ((-6.0, -4.0), (26.0, 30.0), (9000, 10000)),
-    'SW':      ((-6.0, -4.0), (28.0, 32.0), (9000, 10500)),
-    'LW':      ((-6.0, -4.0), (30.0, 35.0), (9000, 11000)),
+# --- 1. DATABASES ---
+
+# Standard Lofts (Reference only - User can override)
+STANDARD_LOFTS = {
+    'Driver': 10.5, '3 Wood': 15.0, '5 Wood': 18.0, 'Hybrid': 21.0,
+    '3 Iron': 21.0, '4 Iron': 24.0, '5 Iron': 27.0, '6 Iron': 30.0,
+    '7 Iron': 34.0, '8 Iron': 38.0, '9 Iron': 42.0, 'PW': 46.0,
+    'GW': 50.0, 'SW': 54.0, 'LW': 58.0
 }
+
+def get_dynamic_ranges(club_name, handicap, user_loft=None):
+    """
+    Calculates optimal targets based on Handicap AND Specific Club Loft.
+    """
+    c_lower = str(club_name).lower()
+    
+    # 1. Handicap Factors
+    tolerance = handicap * 0.1  # Widens the accepted window
+    launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0) # High hcps need more height
+
+    # 2. Loft Logic
+    # If we have a specific user loft, use math to determine launch/spin
+    # Heuristic: Launch ~ 0.55 * Loft. Spin ~ Loft * 200.
+    
+    if user_loft:
+        target_loft = user_loft
+    else:
+        # Fallback to dictionary
+        target_loft = STANDARD_LOFTS.get(club_name, 30.0) # Default mid-iron
+
+    # --- DRIVER/WOODS SPECIAL LOGIC ---
+    if 'driver' in c_lower:
+        # Driver Launch is less dependent on static loft, more on AoA
+        aoa = (-2.0 - (tolerance*0.2), 5.0 + (tolerance*0.2)) 
+        # Base launch 10-15, adjusted by handicap
+        launch = (10.0 + launch_help, 16.0 + launch_help + (tolerance*0.2))
+        spin = (1800, 2800 + (handicap * 40))
+
+    elif 'wood' in c_lower or 'hybrid' in c_lower:
+        aoa = (-4.0, 1.0 + tolerance)
+        # Math-based launch for woods
+        l_center = target_loft * 0.7 
+        launch = (l_center - 2.0, l_center + 2.0 + launch_help)
+        spin = (target_loft * 200, target_loft * 280)
+
+    else:
+        # --- IRONS & WEDGES (Math Based on Loft) ---
+        
+        # AoA: Steeper for higher lofts
+        # 20deg club -> -2.0 AoA. 50deg club -> -5.0 AoA.
+        # Formula: -1.0 - (Loft / 12)
+        target_aoa = -1.0 - (target_loft / 12.0)
+        aoa = (target_aoa - 2.0 - tolerance, -0.5) # Cap at -0.5 to prevent flipping
+
+        # Launch: Typically ~45-55% of static loft for irons
+        l_min = (target_loft * 0.45) - 1.0
+        l_max = (target_loft * 0.55) + 1.0 + launch_help
+        launch = (l_min - tolerance, l_max + tolerance)
+
+        # Spin: ~200 rpm per degree of loft is a good rule of thumb (e.g., 34deg -> 6800rpm)
+        # Stronger lofts (lower number) will naturally require less spin
+        s_base = target_loft * 210
+        spin = (s_base - 1000 - (tolerance*100), s_base + 1000 + (tolerance*100))
+
+    return aoa, launch, spin
 
 # --- 2. DATA PROCESSING ---
 def clean_mevo_data(df, filename):
@@ -55,7 +101,6 @@ def clean_mevo_data(df, filename):
         try: return float(s_val)
         except: return 0.0
 
-    # L/R Columns
     dir_cols = ['Lateral (yds)', 'Swing H (°)', 'Launch H (°)', 'Spin Axis (°)', 'Club Path (°)', 'FTP (°)']
     for col in dir_cols:
         if col in df_clean.columns:
@@ -65,7 +110,6 @@ def clean_mevo_data(df, filename):
             else:
                 df_clean[clean_col_name] = df_clean[col].apply(parse_lr)
 
-    # Numeric Columns
     numeric_cols = ['Carry (yds)', 'Total (yds)', 'Ball (mph)', 'Club (mph)', 'Smash', 'Spin (rpm)', 'Height (ft)', 'AOA (°)', 'Launch V (°)']
     for col in numeric_cols:
         if col in df_clean.columns:
@@ -91,36 +135,13 @@ def filter_outliers(df):
         df_filtered = pd.concat([df_filtered, valid])
     return df_filtered, outlier_count
 
-def check_range(club_name, value, metric_idx):
+def check_range(club_name, value, metric_idx, handicap, user_loft):
     """
-    Checks if value is within optimal range for club.
+    Checks if value is within dynamic optimal range.
     metric_idx: 0=AoA, 1=Launch, 2=Spin
-    Returns: (delta_string, delta_color)
     """
-    # Normalize club name mapping
-    c_map = 'Driver' # Default
-    c_lower = str(club_name).lower()
-    
-    if 'driver' in c_lower: c_map = 'Driver'
-    elif '3 wood' in c_lower: c_map = '3 Wood'
-    elif '5 wood' in c_lower: c_map = '5 Wood'
-    elif 'hybrid' in c_lower: c_map = 'Hybrid'
-    elif 'p' in c_lower and 'w' in c_lower: c_map = 'PW'
-    elif 'g' in c_lower and 'w' in c_lower: c_map = 'GW'
-    elif 's' in c_lower and 'w' in c_lower: c_map = 'SW'
-    elif 'l' in c_lower and 'w' in c_lower: c_map = 'LW'
-    else:
-        # Irons 3-9
-        for i in range(3, 10):
-            if f"{i}" in c_lower:
-                c_map = f"{i} Iron"
-                break
-    
-    if c_map not in OPTIMAL_RANGES:
-        return None, "off"
-        
-    ranges = OPTIMAL_RANGES[c_map][metric_idx]
-    min_v, max_v = ranges
+    ranges = get_dynamic_ranges(club_name, handicap, user_loft) 
+    min_v, max_v = ranges[metric_idx]
     
     if min_v <= value <= max_v:
         return "Optimal ✅", "normal"
@@ -140,7 +161,7 @@ with st.sidebar:
     env_mode = st.radio("Filter:", ["All", "Outdoor Only", "Indoor Only"], index=0)
     
     st.header("3. Player Profile")
-    handicap = st.number_input("Handicap", 0, 54, 15)
+    handicap = st.number_input("Handicap", 0, 54, 15, help="Adjusts target sizes and mechanics tolerances.")
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     
     st.header("4. Settings")
@@ -173,7 +194,6 @@ if uploaded_files:
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 Download Database", master_df.to_csv(index=False).encode('utf-8'), "mevo_db.csv", "text/csv")
 
-        # --- TABS ---
         st.write("---")
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 Target & Accuracy", "🎒 Gapping", "📈 Trends", "🔬 Swing Mechanics"])
 
@@ -222,7 +242,7 @@ if uploaded_files:
                             else: 
                                 fig.add_shape(type="rect", x0=-target_val, y0=y_min, x1=target_val, y1=y_max,
                                     line_color="#00E676", fillcolor="#00E676", opacity=0.1)
-                                    
+                            
                             fig.add_vline(x=0, line_color="white", opacity=0.2)
                             fig.update_xaxes(range=[-60, 60], title="Left <---> Right")
                             st.plotly_chart(style_fig(fig), use_container_width=True)
@@ -258,86 +278,81 @@ if uploaded_files:
                 else:
                     st.info("Need multiple sessions for trends.")
 
-        # ================= TAB 4: MECHANICS (UPDATED) =================
+        # ================= TAB 4: MECHANICS (SMART LOFT) =================
         with tab4:
             if not master_df.empty:
                 st.subheader("🔬 Swing Mechanics & Optimization")
                 
-                mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
+                # 1. CLUB & LOFT SELECTION
+                c_sel1, c_sel2 = st.columns([2,1])
+                with c_sel1:
+                    mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
+                with c_sel2:
+                    # Get standard loft default
+                    def_loft = STANDARD_LOFTS.get(mech_club, 34.0)
+                    user_loft = st.number_input("Reference Loft (°)", value=def_loft, step=0.5, 
+                                               help="Adjust this to match your specific club specs for accurate analysis.")
+                
                 mech_data = master_df[master_df['club'] == mech_club]
                 
-                # METRICS ROW
+                # 2. METRICS ROW
                 col_m1, col_m2, col_m3 = st.columns(3)
                 
-                # 1. AoA
+                # AoA
                 if 'AOA (°)' in mech_data.columns:
                     val_aoa = mech_data['AOA (°)'].mean()
-                    delta_txt, delta_col = check_range(mech_club, val_aoa, 0) # 0 is index for AoA
+                    delta_txt, delta_col = check_range(mech_club, val_aoa, 0, handicap, user_loft) 
                     col_m1.metric("Angle of Attack", f"{val_aoa:.1f}°", delta=delta_txt, delta_color=delta_col)
                 else:
                     col_m1.metric("Angle of Attack", "N/A")
                 
-                # 2. Launch
+                # Launch
                 if 'Launch V (°)' in mech_data.columns:
                     val_launch = mech_data['Launch V (°)'].mean()
-                    delta_txt, delta_col = check_range(mech_club, val_launch, 1) # 1 is Launch
+                    delta_txt, delta_col = check_range(mech_club, val_launch, 1, handicap, user_loft)
                     col_m2.metric("Launch Angle", f"{val_launch:.1f}°", delta=delta_txt, delta_color=delta_col)
                 else:
                     col_m2.metric("Launch Angle", "N/A")
                 
-                # 3. Spin
+                # Spin
                 if 'Spin (rpm)' in mech_data.columns:
                     val_spin = mech_data['Spin (rpm)'].mean()
-                    delta_txt, delta_col = check_range(mech_club, val_spin, 2) # 2 is Spin
+                    delta_txt, delta_col = check_range(mech_club, val_spin, 2, handicap, user_loft)
                     col_m3.metric("Spin Rate", f"{val_spin:.0f} rpm", delta=delta_txt, delta_color=delta_col)
                 else:
                     col_m3.metric("Spin Rate", "N/A")
 
                 st.markdown("---")
                 
-                # CHARTS
+                # 3. VISUALS
                 col_chart_m1, col_chart_m2 = st.columns([2, 1])
                 
                 with col_chart_m1:
                     st.markdown("#### 🚀 Launch vs Spin Optimizer")
                     if 'Launch V (°)' in mech_data.columns and 'Spin (rpm)' in mech_data.columns:
                         fig_opt = px.scatter(mech_data, x='Spin (rpm)', y='Launch V (°)', 
-                                           color='Session', size='Carry (yds)',
-                                           title=f"Optimization: {mech_club}")
+                                           color='Session', size='Carry (yds)', title=f"Optimization: {mech_club}")
                         
-                        # Add Optimal Box if available
-                        # Find range for this club
-                        # Reuse mapping logic broadly
-                        c_lower = str(mech_club).lower()
-                        # Simple lookup for box drawing
-                        opt_box = None
-                        if 'driver' in c_lower: opt_box = OPTIMAL_RANGES['Driver']
-                        elif '7 iron' in c_lower: opt_box = OPTIMAL_RANGES['7 Iron']
+                        # Get Dynamic Box for visual based on USER LOFT
+                        ranges = get_dynamic_ranges(mech_club, handicap, user_loft)
+                        launch_r = ranges[1]
+                        spin_r = ranges[2]
                         
-                        # If we have a range, draw the box
-                        # Note: We just look up generic optimal for the box visual
-                        # For robustness, we can just rely on the metrics above, 
-                        # but adding the Driver box is nice.
-                        if 'driver' in c_lower:
-                             fig_opt.add_shape(type="rect",
-                                x0=1800, y0=10, x1=2800, y1=16,
-                                line=dict(color="Gold", width=2, dash="dot"),
-                                fillcolor="Gold", opacity=0.1
-                            )
-                        
+                        fig_opt.add_shape(type="rect",
+                            x0=spin_r[0], y0=launch_r[0], x1=spin_r[1], y1=launch_r[1],
+                            line=dict(color="Gold", width=2, dash="dot"),
+                            fillcolor="Gold", opacity=0.1
+                        )
                         st.plotly_chart(style_fig(fig_opt), use_container_width=True)
 
                 with col_chart_m2:
                     st.markdown("#### ↩️ Face to Path")
                     if 'Club Path_Clean' in mech_data.columns and 'FTP_Clean' in mech_data.columns:
                         fig_path = px.scatter(mech_data, x='Club Path_Clean', y='FTP_Clean',
-                                            color='Lateral_Clean',
-                                            color_continuous_scale='RdBu_r',
-                                            title="Shape Control")
+                                            color='Lateral_Clean', color_continuous_scale='RdBu_r', title="Shape Control")
                         fig_path.add_hline(y=0, line_color="white", opacity=0.2)
                         fig_path.add_vline(x=0, line_color="white", opacity=0.2)
                         st.plotly_chart(style_fig(fig_path), use_container_width=True)
-
 else:
     st.markdown("""
     <div style="text-align: center; margin-top: 50px;">
