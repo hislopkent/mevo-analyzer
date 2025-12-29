@@ -13,95 +13,101 @@ st.markdown("""
     /* 1. FORCE MAIN DARK THEME */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     
-    /* 2. SIDEBAR BACKGROUND & TEXT */
+    /* 2. SIDEBAR GLOBAL STYLES */
     section[data-testid="stSidebar"] {
         background-color: #12151d;
         border-right: 1px solid #333;
     }
     
+    /* Force ALL Sidebar Text White (Headers, Paragraphs, Labels) */
     section[data-testid="stSidebar"] h1, 
     section[data-testid="stSidebar"] h2, 
     section[data-testid="stSidebar"] h3, 
+    section[data-testid="stSidebar"] .stMarkdown,
     section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] .stMarkdown p,
-    section[data-testid="stSidebar"] .stRadio label {
+    section[data-testid="stSidebar"] .stRadio div[role='radiogroup'] label div {
         color: #FAFAFA !important;
     }
 
-    /* 3. FIX SIDEBAR CLOSE/OPEN BUTTON (The 'X') */
-    /* This targets the button in the top right of the sidebar */
-    section[data-testid="stSidebar"] button {
-        color: #FAFAFA !important;
-    }
-    /* This specifically targets the SVG icon inside the button */
-    section[data-testid="stSidebar"] button svg {
-        fill: #FAFAFA !important;
-        stroke: #FAFAFA !important;
-    }
-
-    /* 4. FIX FILE UPLOADER READABILITY */
-    [data-testid="stFileUploader"] {
-        background-color: #1E222B;
-        border-radius: 10px;
-        padding: 10px;
-    }
-    /* Force all text inside the uploader to be white */
-    [data-testid="stFileUploader"] div,
-    [data-testid="stFileUploader"] span,
-    [data-testid="stFileUploader"] small,
-    [data-testid="stFileUploader"] p {
-        color: #FAFAFA !important;
-    }
-    /* The uploaded file item background */
-    [data-testid="stFileUploader"] div[role="listitem"] {
-        background-color: #262730 !important;
-    }
-    /* The "Browse files" button */
-    [data-testid="stFileUploader"] button {
+    /* 3. FIX PLAYER CONFIG INPUTS (Sliders, Number Inputs) */
+    /* Input backgrounds */
+    section[data-testid="stSidebar"] input {
         background-color: #262730 !important;
         color: #FAFAFA !important;
         border: 1px solid #444 !important;
     }
+    /* Slider text */
+    section[data-testid="stSidebar"] div[data-testid="stSliderTickBarMin"],
+    section[data-testid="stSidebar"] div[data-testid="stSliderTickBarMax"],
+    section[data-testid="stSidebar"] div[data-testid="stThumbValue"] {
+        color: #FAFAFA !important;
+    }
 
-    /* 5. EXPANDERS & FAQ (Fixing Hover/Dropdown issues) */
+    /* 4. FIX FILE UPLOADER (The White Box Issue) */
+    /* Target the dropzone container specifically */
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] section {
+        background-color: #262730 !important; /* Dark Grey Background */
+        border: 1px dashed #4DD0E1 !important;
+    }
+    /* Force text inside uploader to be white */
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] div,
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] span,
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] small {
+        color: #FAFAFA !important;
+    }
+    /* Style the 'Browse files' button */
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] button {
+        background-color: #1E222B !important;
+        color: #4DD0E1 !important;
+        border: 1px solid #4DD0E1 !important;
+    }
+
+    /* 5. REDESIGNED STATS BOX (Shots/Sessions) */
+    .stat-card-container {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .stat-card {
+        background: linear-gradient(145deg, #1E222B, #262730);
+        border-radius: 12px;
+        padding: 15px;
+        flex: 1;
+        text-align: center;
+        border: 1px solid #333;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .stat-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #4DD0E1;
+        margin: 0;
+    }
+    .stat-label {
+        font-size: 14px;
+        color: #B0B3B8;
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    /* 6. GENERAL UI IMPROVEMENTS */
     div[data-testid="stExpander"] {
         background-color: #1E222B !important;
         border: 1px solid #444;
-        border-radius: 5px;
         color: #FAFAFA !important;
     }
-    
-    /* The Summary (Question) */
-    div[data-testid="stExpander"] details > summary {
-        color: #FAFAFA !important;
+    div[data-testid="stExpander"] summary p {
+        color: #FAFAFA !important; 
+        font-weight: 600;
     }
-    div[data-testid="stExpander"] details > summary p {
-        color: #FAFAFA !important;
-        font-weight: 500;
+    .feature-card { 
+        background-color: #1E222B; 
+        padding: 20px; 
+        border-radius: 10px; 
+        text-align: center; 
+        border: 1px solid #333; 
     }
-    div[data-testid="stExpander"] details > summary svg {
-        fill: #FAFAFA !important;
-    }
-    
-    /* The Content (Answer) - Make sure it stays white */
-    div[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p {
-        color: #E0E0E0 !important; /* Slightly softer white for body text */
-    }
-
-    /* 6. TABS */
-    div[data-testid="stTabs"] button {
-        color: #E0E0E0 !important;
-        font-weight: 500;
-    }
-    div[data-testid="stTabs"] button[aria-selected="true"] {
-        color: #FAFAFA !important;
-        border-top-color: #4DD0E1 !important;
-    }
-
-    /* 7. GENERAL METRICS & CARDS */
-    div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
-    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
-    .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -314,14 +320,24 @@ with st.sidebar:
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
-    # SUMMARY STATS
+    # SUMMARY STATS (NEW CARD DESIGN)
     if not st.session_state['master_df'].empty:
         st.markdown("---")
         tot_shots = len(st.session_state['master_df'])
         tot_sess = st.session_state['master_df']['Date'].nunique()
-        c_s1, c_s2 = st.columns(2)
-        c_s1.markdown(f"<div class='stat-box'><b>Shots</b><br><span style='font-size:20px; color:#4DD0E1'>{tot_shots}</span></div>", unsafe_allow_html=True)
-        c_s2.markdown(f"<div class='stat-box'><b>Sessions</b><br><span style='font-size:20px; color:#FF4081'>{tot_sess}</span></div>", unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="stat-card-container">
+            <div class="stat-card">
+                <p class="stat-value">{tot_shots}</p>
+                <p class="stat-label">Shots</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-value" style="color: #FF4081;">{tot_sess}</p>
+                <p class="stat-label">Sessions</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # --- 4. MAIN APP LOGIC ---
 master_df = st.session_state['master_df']
