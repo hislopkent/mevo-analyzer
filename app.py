@@ -2,27 +2,32 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="My Mevo+ Dashboard", layout="wide")
-st.title("⛳ Mevo+ Lifetime Analyzer")
+st.set_page_config(page_title="Mevo+ Pro Analytics", layout="wide", page_icon="⛳")
+
+# Custom CSS for a "Pro" look
+st.markdown("""
+<style>
+    .stApp { background-color: #0e1117; color: #FAFAFA; }
+    div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
+    h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("⛳ Mevo+ Pro Analytics")
 
 # --- 1. DATA PROCESSING FUNCTIONS ---
 
 def clean_mevo_data(df, filename):
-    """
-    Cleans raw FlightScope Mevo+ CSV data.
-    - Removes summary rows.
-    - Parses text directions (e.g., "10.5 L").
-    - Cleans units.
-    """
-    # Filter out summary rows (keep only rows where Shot is a number)
+    # Filter out summary rows
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
     
-    # Add Session ID
+    # Session ID
     df_clean['Session'] = filename.replace('.csv', '')
     
-    # Helper: Parse "10 L" / "10 R" to floats
+    # Helper: Parse "10 L" / "10 R"
     def parse_lr(val):
         if pd.isna(val): return 0.0
         s_val = str(val).strip()
@@ -39,16 +44,13 @@ def clean_mevo_data(df, filename):
     dir_cols = ['Lateral (yds)', 'Swing H (°)', 'Launch H (°)', 'Spin Axis (°)']
     for col in dir_cols:
         if col in df_clean.columns:
-            # Create a generic numeric name for checking later
             clean_col_name = col.replace(' (yds)', '').replace(' (°)', '') + '_Clean'
-            
-            # Map Lateral specifically for charts
             if 'Lateral' in col:
                 df_clean['Lateral_Clean'] = df_clean[col].apply(parse_lr)
             else:
                 df_clean[clean_col_name] = df_clean[col].apply(parse_lr)
 
-    # Clean standard numeric columns
+    # Clean numeric columns
     numeric_cols = ['Carry (yds)', 'Total (yds)', 'Ball (mph)', 'Club (mph)', 'Smash', 'Spin (rpm)', 'Height (ft)']
     for col in numeric_cols:
         if col in df_clean.columns:
@@ -57,15 +59,11 @@ def clean_mevo_data(df, filename):
     return df_clean
 
 def filter_outliers(df):
-    """
-    Removes shots that are statistically improbable (Mishits/Misreads).
-    """
     df_filtered = pd.DataFrame()
     outlier_count = 0
     
     for club in df['club'].unique():
         club_data = df[df['club'] == club].copy()
-        
         if len(club_data) < 5:
             df_filtered = pd.concat([df_filtered, club_data])
             continue
@@ -74,7 +72,6 @@ def filter_outliers(df):
         q3 = club_data['Carry (yds)'].quantile(0.75)
         iqr = q3 - q1
         
-        # Lower bound strict (remove duffs), Upper bound loose (keep bombs)
         lower_bound = q1 - (1.5 * iqr) 
         upper_bound = q3 + (3.0 * iqr) 
         
@@ -90,21 +87,17 @@ def filter_outliers(df):
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
-    st.header("1. Upload Data")
-    uploaded_files = st.file_uploader("Upload CSV Files", accept_multiple_files=True, type='csv')
+    st.header("1. Data Uplink")
+    uploaded_files = st.file_uploader("Drop CSV Files Here", accept_multiple_files=True, type='csv')
     
-    st.header("2. Player Profile")
-    # Handicap Input for Virtual Green Sizing
-    handicap = st.number_input("Your Handicap", min_value=0, max_value=54, value=15, step=1, 
-                               help="Used to calculate the size of the 'Virtual Green' target zone.")
+    st.header("2. Player Config")
+    handicap = st.number_input("Handicap", min_value=0, max_value=54, value=15, step=1)
     
-    st.header("3. Settings")
-    remove_bad_shots = st.checkbox("Remove Outliers", value=True, 
-                                  help="Automatically removes duffs and misreads.")
+    st.header("3. Filters")
+    remove_bad_shots = st.checkbox("Smart Clean (Remove Outliers)", value=True)
 
 # --- 3. MAIN APP LOGIC ---
 if uploaded_files:
-    # A. LOAD & CLEAN
     all_data = []
     for f in uploaded_files:
         try:
@@ -112,178 +105,145 @@ if uploaded_files:
             clean = clean_mevo_data(raw, f.name)
             all_data.append(clean)
         except Exception as e:
-            st.error(f"Could not load {f.name}: {e}")
+            st.error(f"Error: {f.name}: {e}")
 
     if all_data:
         master_df = pd.concat(all_data, ignore_index=True)
-        original_count = len(master_df)
         
-        # B. APPLY OUTLIER LOGIC
         if remove_bad_shots:
             master_df, dropped_count = filter_outliers(master_df)
             if dropped_count > 0:
-                st.success(f"🧹 Cleaned Data: Removed {dropped_count} outliers from {original_count} total shots.")
+                st.toast(f"🧹 Removed {dropped_count} outliers", icon="🗑️")
         
-        # C. CSV DOWNLOAD (New Feature)
+        # CSV Download
         csv_data = master_df.to_csv(index=False).encode('utf-8')
         st.sidebar.markdown("---")
-        st.sidebar.download_button(
-            label="📥 Download Merged Database",
-            data=csv_data,
-            file_name="my_mevo_lifetime_data.csv",
-            mime="text/csv"
-        )
+        st.sidebar.download_button("📥 Export Database", csv_data, "mevo_master.csv", "text/csv")
 
-        # --- D. DASHBOARD TABS ---
+        # --- TABS ---
         st.write("---")
-        tab1, tab2, tab3 = st.tabs(["🔍 Single Club & Accuracy", "🎒 Bag Gapping", "📈 Trends & Progress"])
+        tab1, tab2, tab3 = st.tabs(["🎯 Shot Analyzer", "📏 Gapping Matrix", "📈 Trend Lines"])
 
-        # ==========================================
-        # TAB 1: SINGLE CLUB & ACCURACY
-        # ==========================================
+        # GLOBAL CHART THEME
+        def style_fig(fig):
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Arial", size=12, color="#FAFAFA"),
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            return fig
+
+        # ================= TAB 1: ANALYZER =================
         with tab1:
-            # Sort clubs by distance (Driver first)
             club_order = master_df.groupby('club')['Carry (yds)'].mean().sort_values(ascending=False).index
             selected_club = st.selectbox("Select Club", club_order)
-            
             subset = master_df[master_df['club'] == selected_club]
             
             if len(subset) > 0:
-                # --- CALCULATE VIRTUAL GREEN SIZE ---
-                # Logic: Base 10 yds (Scratch) + (Handicap * 0.8)
-                # Examples: Hcp 0 -> 10y radius | Hcp 15 -> 22y radius | Hcp 30 -> 34y radius
+                # Stats Row
+                col1, col2, col3, col4, col5 = st.columns(5)
+                
+                # Dynamic Green Size
                 target_radius = 10 + (handicap * 0.8)
                 
-                # --- TILES ---
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Avg Carry", f"{subset['Carry (yds)'].mean():.1f} yds")
-                c2.metric("Max Carry", f"{subset['Carry (yds)'].max():.1f} yds")
-                
-                # Accuracy Score: % of shots within the handicap-adjusted target zone
+                # Accuracy Calc
                 if 'Lateral_Clean' in subset.columns:
-                    shots_on_target = subset[abs(subset['Lateral_Clean']) <= target_radius]
-                    accuracy_pct = (len(shots_on_target) / len(subset)) * 100
-                    c3.metric(f"Virtual Green Hit %", f"{accuracy_pct:.0f}%", 
-                              help=f"Percentage of shots landing within {target_radius:.1f} yds of center (Based on Handicap {handicap})")
-                else:
-                    c3.metric("Ball Speed", f"{subset['Ball (mph)'].mean():.1f} mph")
-                    
-                c4.metric("Smash Factor", f"{subset['Smash'].mean():.2f}")
-
-                # --- CHARTS ---
-                col_chart1, col_chart2 = st.columns([2, 1]) 
+                    on_target = subset[abs(subset['Lateral_Clean']) <= target_radius]
+                    acc_score = (len(on_target) / len(subset)) * 100
+                    col1.metric("Accuracy Score", f"{acc_score:.0f}%", f"Target: ±{target_radius:.0f}y")
                 
-                # 1. Dispersion Scatter Plot with Virtual Green
-                with col_chart1:
-                    st.subheader(f"🎯 Dispersion")
+                col2.metric("Avg Carry", f"{subset['Carry (yds)'].mean():.1f}")
+                col3.metric("Max Carry", f"{subset['Carry (yds)'].max():.1f}")
+                col4.metric("Ball Speed", f"{subset['Ball (mph)'].mean():.1f}")
+                col5.metric("Smash", f"{subset['Smash'].mean():.2f}")
+
+                # Charts
+                c_chart1, c_chart2 = st.columns([3, 1])
+                
+                with c_chart1:
                     if 'Lateral_Clean' in subset.columns:
+                        # DISPERSION CHART
                         fig_disp = px.scatter(
                             subset, x='Lateral_Clean', y='Carry (yds)', 
                             color='Session', 
-                            hover_data=['Ball (mph)', 'Shot Type'],
-                            range_x=[-60, 60]
+                            symbol='Shot Type' if 'Shot Type' in subset.columns else None,
+                            hover_data=['Ball (mph)', 'Club (mph)'],
+                            title=f"Shot Dispersion: {selected_club}",
+                            color_discrete_sequence=px.colors.qualitative.Bold
                         )
                         
-                        # Add The "Virtual Green" Zone
+                        # Add Virtual Green
                         avg_carry = subset['Carry (yds)'].mean()
                         fig_disp.add_shape(type="rect",
-                            x0=-target_radius, y0=avg_carry - target_radius, # Square green logic
+                            x0=-target_radius, y0=avg_carry - target_radius,
                             x1=target_radius, y1=avg_carry + target_radius,
-                            line=dict(color="Green", width=1, dash="dot"),
-                            fillcolor="Green", opacity=0.1
+                            line=dict(color="#00E676", width=2, dash="dot"),
+                            fillcolor="#00E676", opacity=0.15,
+                            layer="below"
                         )
+                        fig_disp.add_annotation(x=0, y=avg_carry+target_radius, text="Virtual Green", showarrow=False, font=dict(color="#00E676"))
                         
                         # Add Center Line
-                        fig_disp.add_vline(x=0, line_dash="solid", line_color="green", opacity=0.3)
+                        fig_disp.add_vline(x=0, line_width=1, line_color="#FAFAFA", opacity=0.2)
                         
-                        # Labels
-                        fig_disp.update_xaxes(title="Left <--- Target ---> Right")
-                        fig_disp.update_layout(showlegend=True)
-                        st.plotly_chart(fig_disp, use_container_width=True)
+                        # Fix Axes
+                        fig_disp.update_xaxes(title="Left <---> Right", range=[-60, 60], zeroline=False, gridcolor='rgba(255,255,255,0.1)')
+                        fig_disp.update_yaxes(title="Carry (yds)", gridcolor='rgba(255,255,255,0.1)')
+                        fig_disp.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='White')))
                         
-                        st.caption(f"Note: The green box represents your target zone ({target_radius:.1f} yds wide) based on a {handicap} handicap.")
-                    else:
-                        st.warning("No lateral data available.")
+                        st.plotly_chart(style_fig(fig_disp), use_container_width=True)
 
-                # 2. Shot Shape Pie Chart
-                with col_chart2:
-                    st.subheader("Shot Shape")
+                with c_chart2:
                     if 'Shot Type' in subset.columns:
-                        shape_counts = subset['Shot Type'].value_counts().reset_index()
-                        shape_counts.columns = ['Shape', 'Count']
-                        
-                        fig_pie = px.pie(
-                            shape_counts, 
-                            values='Count', 
-                            names='Shape',
-                            hole=0.4,
-                            color_discrete_sequence=px.colors.qualitative.Pastel
-                        )
-                        fig_pie.update_layout(legend=dict(orientation="h", y=-0.1))
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                    else:
-                        st.info("No 'Shot Type' data found.")
-            else:
-                st.write("No data for this club.")
+                        # PIE CHART
+                        type_counts = subset['Shot Type'].value_counts().reset_index()
+                        type_counts.columns = ['Type', 'Count']
+                        fig_pie = px.pie(type_counts, values='Count', names='Type', hole=0.5, 
+                                        color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_pie.update_layout(showlegend=False, annotations=[dict(text='Shape', x=0.5, y=0.5, font_size=16, showarrow=False)])
+                        st.plotly_chart(style_fig(fig_pie), use_container_width=True)
 
-        # ==========================================
-        # TAB 2: BAG GAPPING
-        # ==========================================
+        # ================= TAB 2: GAPPING =================
         with tab2:
-            st.subheader("📏 Yardage Gapping Matrix")
-            # Sort by average carry
+            st.subheader("🎒 Bag Gapping Matrix")
+            
+            # Sorted Box Plot
             club_means = master_df.groupby("club")["Carry (yds)"].mean().sort_values(ascending=False)
             
             fig_gap = px.box(
-                master_df, 
-                x='club', 
-                y='Carry (yds)',
-                color='club',
+                master_df, x='club', y='Carry (yds)', color='club',
+                points="all", # Shows individual dots
                 category_orders={'club': club_means.index},
-                title="Carry Distance Ranges by Club"
+                color_discrete_sequence=px.colors.qualitative.Vivid
             )
             fig_gap.update_layout(showlegend=False)
-            st.plotly_chart(fig_gap, use_container_width=True)
-            
-            with st.expander("View Data Table"):
-                summary = master_df.groupby('club')[['Carry (yds)', 'Total (yds)', 'Ball (mph)', 'Smash']].mean().round(1)
-                summary = summary.reindex(club_means.index)
-                st.dataframe(summary)
+            fig_gap.update_traces(marker=dict(size=3, opacity=0.5), jitter=0.3)
+            st.plotly_chart(style_fig(fig_gap), use_container_width=True)
 
-        # ==========================================
-        # TAB 3: TRENDS
-        # ==========================================
+        # ================= TAB 3: TRENDS =================
         with tab3:
-            st.subheader("📅 Progress Over Time")
+            st.subheader("📈 Performance Trends")
             
             c_t1, c_t2 = st.columns(2)
-            with c_t1:
-                trend_club = st.selectbox("Club", club_order, key='trend_club_select')
-            with c_t2:
-                metric_to_track = st.selectbox("Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash', 'Spin (rpm)'])
+            with c_t1: trend_club = st.selectbox("Track Club", club_order, key='t_club')
+            with c_t2: metric = st.selectbox("Track Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash'])
             
-            # Trend Logic
-            trend_subset = master_df[master_df['club'] == trend_club].copy()
-            daily_avg = trend_subset.groupby('Session')[metric_to_track].mean().reset_index()
-            daily_avg = daily_avg.sort_values('Session') 
+            trend_data = master_df[master_df['club'] == trend_club].groupby('Session')[metric].mean().reset_index().sort_values('Session')
             
-            if len(daily_avg) > 1:
-                fig_trend = px.line(
-                    daily_avg, 
-                    x='Session', 
-                    y=metric_to_track, 
-                    markers=True,
-                    title=f"Avg {metric_to_track}: {trend_club}"
-                )
-                st.plotly_chart(fig_trend, use_container_width=True)
+            if len(trend_data) > 1:
+                fig_trend = px.line(trend_data, x='Session', y=metric, markers=True, 
+                                   title=f"{metric} Progress: {trend_club}")
+                fig_trend.update_traces(line_color='#00E676', line_width=4, marker=dict(size=10, color='White'))
+                st.plotly_chart(style_fig(fig_trend), use_container_width=True)
             else:
-                st.info("Not enough sessions uploaded to show a trend line.")
+                st.info("Upload multiple sessions with Date-based filenames to see trends.")
 
 else:
-    # --- LANDING PAGE ---
     st.markdown("""
-    ### 👋 Welcome to your Mevo+ Analyzer
-    1. Export CSVs from FlightScope.
-    2. **Rename** them to `YYYY-MM-DD_Desc.csv` (e.g., `2023-10-27_Driver.csv`).
-    3. Drag & drop into the sidebar.
-    """)
+    <div style="text-align: center; margin-top: 50px;">
+        <h1>🏌️‍♂️ Ready to Practice?</h1>
+        <p style="font-size: 18px; color: #888;">Drag and drop your FlightScope CSV files to unlock pro-level analytics.</p>
+    </div>
+    """, unsafe_allow_html=True)
