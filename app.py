@@ -34,9 +34,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Main Title (Hidden on Landing Page for cleaner look, shown in sidebar or top bar mostly)
-# We will use a custom Hero title on the landing page instead.
-
 # --- 1. SESSION STATE ---
 if 'master_df' not in st.session_state:
     st.session_state['master_df'] = pd.DataFrame()
@@ -75,11 +72,15 @@ def get_dynamic_ranges(club_name, handicap, user_loft=None):
 
     return aoa, launch, spin
 
-def clean_mevo_data(df, filename, selected_date, normalize_ball=False):
+def clean_mevo_data(df, filename, selected_date):
+    # Filter valid shots
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
+    
+    # Add Metadata
     df_clean['Session'] = filename.replace('.csv', '')
     df_clean['Date'] = pd.to_datetime(selected_date)
     
+    # Text Parsing Helper
     def parse_lr(val):
         if pd.isna(val): return 0.0
         s_val = str(val).strip()
@@ -105,14 +106,6 @@ def clean_mevo_data(df, filename, selected_date, normalize_ball=False):
     for col in numeric_cols:
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-            
-    if normalize_ball:
-        if 'Carry (yds)' in df_clean.columns:
-            df_clean['Carry (yds)'] = df_clean['Carry (yds)'] * 1.10
-        if 'Total (yds)' in df_clean.columns:
-            df_clean['Total (yds)'] = df_clean['Total (yds)'] * 1.10
-        if 'Ball (mph)' in df_clean.columns:
-            df_clean['Ball (mph)'] = df_clean['Ball (mph)'] * 1.04
             
     return df_clean
 
@@ -178,7 +171,6 @@ with st.sidebar:
 
     st.header("2. Add Session")
     import_date = st.date_input("Date of Session")
-    normalize_on = st.checkbox("🔮 Range Ball Mode", value=False, help="Multiplies Carry by 1.10x to simulate Premium Balls.")
     uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
     if st.button("➕ Add to Database"):
@@ -187,7 +179,7 @@ with st.sidebar:
             for f in uploaded_files:
                 try:
                     raw = pd.read_csv(f)
-                    clean = clean_mevo_data(raw, f.name, import_date, normalize_on)
+                    clean = clean_mevo_data(raw, f.name, import_date)
                     new_data.append(clean)
                 except Exception as e:
                     st.error(f"Error {f.name}: {e}")
