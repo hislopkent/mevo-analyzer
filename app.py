@@ -10,23 +10,68 @@ st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_
 # Custom CSS
 st.markdown("""
 <style>
-    /* Main Background and Default Text Color */
+    /* 1. MAIN DARK THEME */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     
-    /* Metrics */
-    div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
+    /* 2. SIDEBAR SPECIFIC STYLING */
+    section[data-testid="stSidebar"] {
+        background-color: #12151d;
+        border-right: 1px solid #333;
+    }
     
-    /* Headers */
-    h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
-    
-    /* Custom Cards */
-    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
-    .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
-    .faq-box { background-color: #262730; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4DD0E1; }
+    /* Force Sidebar Header/Label Text White */
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3, 
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown p {
+        color: #FAFAFA !important;
+    }
 
-    /* --- IMPROVED READABILITY CSS --- */
+    /* FIX: Sidebar Close Button & Menu Icon */
+    section[data-testid="stSidebar"] button[kind="header"] {
+        color: #FAFAFA !important;
+    }
+    section[data-testid="stSidebar"] button[kind="header"] svg {
+        fill: #FAFAFA !important;
+    }
+
+    /* FIX: File Uploader Text (The "golf_lesson.csv" text) */
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] div,
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] span,
+    section[data-testid="stSidebar"] [data-testid='stFileUploader'] small {
+        color: #FAFAFA !important;
+    }
+    /* File Uploader Background */
+    [data-testid='stFileUploader'] section {
+        background-color: #1E222B !important;
+        border: 1px solid #444;
+    }
+
+    /* 3. EXPANDERS (FAQ & Sidebar) */
+    div[data-testid="stExpander"] {
+        background-color: #1E222B !important;
+        border: 1px solid #444;
+        border-radius: 5px;
+        color: #FAFAFA !important; /* Force content text white */
+    }
     
-    /* 1. Tabs */
+    /* Expander Header (Summary) */
+    div[data-testid="stExpander"] details > summary {
+        color: #FAFAFA !important;
+        font-weight: 500;
+    }
+    div[data-testid="stExpander"] details > summary:hover {
+        color: #4DD0E1 !important;
+    }
+    div[data-testid="stExpander"] details > summary svg {
+        fill: #FAFAFA !important;
+    }
+    div[data-testid="stExpander"] details > summary:hover svg {
+        fill: #4DD0E1 !important;
+    }
+    
+    /* 4. TABS */
     div[data-testid="stTabs"] button {
         color: #E0E0E0 !important;
         font-weight: 500;
@@ -36,34 +81,12 @@ st.markdown("""
         border-top-color: #4DD0E1 !important;
     }
 
-    /* 2. Expanders (FAQ Questions) */
-    div[data-testid="stExpander"] summary p {
-        color: #FAFAFA !important;
-        font-size: 16px;
-        font-weight: 500;
-    }
-    div[data-testid="stExpander"] summary svg {
-        fill: #FAFAFA !important;
-    }
-    div[data-testid="stExpander"] summary:hover p {
-        color: #4DD0E1 !important;
-    }
-    div[data-testid="stExpander"] summary:hover svg {
-        fill: #4DD0E1 !important;
-    }
+    /* 5. GENERAL UI ELEMENTS */
+    div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
     
-    /* 3. Sidebar Fixes */
-    section[data-testid="stSidebar"] {
-        background-color: #12151d;
-        border-right: 1px solid #333;
-    }
-    section[data-testid="stSidebar"] h1, 
-    section[data-testid="stSidebar"] h2, 
-    section[data-testid="stSidebar"] h3, 
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] .stMarkdown p {
-        color: #FAFAFA !important;
-    }
+    /* Custom Cards */
+    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
+    .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -248,32 +271,21 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # --- MY BAG CONFIG (MOBILE FRIENDLY) ---
+    # --- MY BAG CONFIG ---
     st.header("3. My Bag Setup")
-    with st.expander("⚙️ Edit Club Lofts"):
-        # 1. Selector (Easy to tap)
+    with st.expander("⚙️ Configure Club Lofts"):
+        # Mobile Friendly Editor
         selected_club = st.selectbox("Choose Club:", CLUB_SORT_ORDER, index=0)
-        
-        # 2. Current Value Safe Get
         current_loft = st.session_state['my_bag'].get(selected_club, DEFAULT_LOFTS.get(selected_club, 30.0))
+        new_loft = st.number_input(f"Loft for {selected_club} (°)", value=float(current_loft), step=0.5, format="%.1f")
         
-        # 3. Stepper (Best for mobile edits)
-        new_loft = st.number_input(
-            f"Loft for {selected_club} (°)", 
-            value=float(current_loft), 
-            step=0.5,
-            format="%.1f"
-        )
-        
-        # 4. Big Update Button
         if st.button("💾 Save Loft Change", type="primary", use_container_width=True):
             st.session_state['my_bag'][selected_club] = new_loft
             st.toast(f"Saved: {selected_club} @ {new_loft}°", icon="✅")
             
         st.markdown("---")
-        
-        # 5. Read-Only Summary Table
         st.caption("Current Configuration:")
+        
         bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
@@ -560,8 +572,7 @@ if not master_df.empty:
             
         with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
             st.markdown("""
-            **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag). 
-            
+            **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).             
             **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
             * We apply a correction factor of approx **1.1% per 1,000 ft**.
             * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
@@ -582,10 +593,8 @@ if not master_df.empty:
             st.markdown("""
             * **Smash Factor:** Efficiency (Ball Speed ÷ Club Speed). Driver ideal is 1.50. 7-iron ideal is ~1.33.
             * **Spin Axis:** The direction the ball is spinning. 
-                * **Positive (+):** Tilted Right (Fade/Slice for righty). 
-                * **Negative (-):** Tilted Left (Draw/Hook for righty).
-            * **Angle of Attack (AoA):** Are you hitting up or down? 
-                * **Driver:** Hitting UP (+) reduces spin and adds distance.
+                * **Positive (+):** Tilted Right (Fade/Slice for righty).                 * **Negative (-):** Tilted Left (Draw/Hook for righty).
+            * **Angle of Attack (AoA):** Are you hitting up or down?                 * **Driver:** Hitting UP (+) reduces spin and adds distance.
                 * **Irons:** Hitting DOWN (-) creates compression and control.
             * **Launch V:** The vertical angle the ball takes off at relative to the ground.
             """)
@@ -650,8 +659,7 @@ else:
         
     with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
         st.markdown("""
-        **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag). 
-        
+        **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).         
         **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
         * We apply a correction factor of approx **1.1% per 1,000 ft**.
         * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
