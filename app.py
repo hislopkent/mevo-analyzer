@@ -10,51 +10,50 @@ st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_
 # Custom CSS
 st.markdown("""
 <style>
-    /* Main Background and Default Text Color */
+    /* 1. MAIN DARK THEME */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     
-    /* Metrics */
+    /* 2. SIDEBAR SPECIFIC STYLING (The Fix) */
+    section[data-testid="stSidebar"] {
+        background-color: #12151d; /* Force Dark Sidebar */
+        border-right: 1px solid #333;
+    }
+    
+    /* Force Sidebar Text to be White */
+    section[data-testid="stSidebar"] h1, 
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3, 
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown p {
+        color: #FAFAFA !important;
+    }
+    
+    /* Fix Expanders in Sidebar (Load History / My Bag) */
+    section[data-testid="stSidebar"] div[data-testid="stExpander"] {
+        background-color: #1E222B !important;
+        border: 1px solid #444;
+        border-radius: 5px;
+    }
+    
+    /* Fix Expander Header Text */
+    div[data-testid="stExpander"] details > summary {
+        color: #FAFAFA !important;
+    }
+    div[data-testid="stExpander"] details > summary:hover {
+        color: #4DD0E1 !important;
+    }
+    
+    /* 3. GENERAL UI ELEMENTS */
     div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
     
-    /* Headers */
-    h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
-    
+    /* TABS: Make unselected tabs bright grey, selected tab white */
+    div[data-testid="stTabs"] button { color: #E0E0E0 !important; font-weight: 500; }
+    div[data-testid="stTabs"] button[aria-selected="true"] { color: #FAFAFA !important; border-top-color: #4DD0E1 !important; }
+
     /* Custom Cards */
     .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
     .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
     .faq-box { background-color: #262730; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4DD0E1; }
-
-    /* --- IMPROVED READABILITY CSS --- */
-    
-    /* 1. Tabs */
-    /* Make unselected tab labels bright and readable */
-    div[data-testid="stTabs"] button {
-        color: #E0E0E0 !important;
-        font-weight: 500;
-    }
-    /* Make the selected tab label pure white */
-    div[data-testid="stTabs"] button[aria-selected="true"] {
-        color: #FAFAFA !important;
-    }
-
-    /* 2. Expanders (FAQ Questions) */
-    /* Make the question text (summary) bright white */
-    div[data-testid="stExpander"] summary p {
-        color: #FAFAFA !important;
-        font-size: 16px;
-        font-weight: 500;
-    }
-    /* Make the little arrow icon white as well */
-    div[data-testid="stExpander"] summary svg {
-        fill: #FAFAFA !important;
-    }
-    /* Optional: Add a hover effect to make it pop */
-    div[data-testid="stExpander"] summary:hover p {
-        color: #4DD0E1 !important;
-    }
-    div[data-testid="stExpander"] summary:hover svg {
-        fill: #4DD0E1 !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -529,7 +528,7 @@ if not master_df.empty:
     with tab_faq:
         st.subheader("❓ FAQ & Help")
         
-        with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=True):
+        with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
             st.markdown("""
             **The Problem:** Sometimes the radar misreads a shot (e.g., a 'ghost' 400-yard 7-iron) or you duff one 20 yards. These mess up your averages.
             
@@ -539,17 +538,16 @@ if not master_df.empty:
             3. This gives you a 'True Average' of your *solid* strikes.
             """)
             
-        with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=True):
+        with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
             st.markdown("""
-            **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).
-            
+            **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).             
             **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
             * We apply a correction factor of approx **1.1% per 1,000 ft**.
             * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
             * The app strips away that 6% bonus so you can compare your "Denver 7-iron" to your "Florida 7-iron" fairly.
             """)
         
-        with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=True):
+        with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=False):
             st.markdown("""
             **Context:** A '7-Iron' isn't a standard unit of measurement.
             * A modern 'Game Improvement' 7-iron might be **28°**.
@@ -619,8 +617,7 @@ else:
         
     with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
         st.markdown("""
-        **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).
-        
+        **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).         
         **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
         * We apply a correction factor of approx **1.1% per 1,000 ft**.
         * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
