@@ -10,12 +10,51 @@ st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_
 # Custom CSS
 st.markdown("""
 <style>
+    /* Main Background and Default Text Color */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
+    
+    /* Metrics */
     div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
+    
+    /* Headers */
     h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
+    
+    /* Custom Cards */
     .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
     .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
     .faq-box { background-color: #262730; padding: 20px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4DD0E1; }
+
+    /* --- IMPROVED READABILITY CSS --- */
+    
+    /* 1. Tabs */
+    /* Make unselected tab labels bright and readable */
+    div[data-testid="stTabs"] button {
+        color: #E0E0E0 !important;
+        font-weight: 500;
+    }
+    /* Make the selected tab label pure white */
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: #FAFAFA !important;
+    }
+
+    /* 2. Expanders (FAQ Questions) */
+    /* Make the question text (summary) bright white */
+    div[data-testid="stExpander"] summary p {
+        color: #FAFAFA !important;
+        font-size: 16px;
+        font-weight: 500;
+    }
+    /* Make the little arrow icon white as well */
+    div[data-testid="stExpander"] summary svg {
+        fill: #FAFAFA !important;
+    }
+    /* Optional: Add a hover effect to make it pop */
+    div[data-testid="stExpander"] summary:hover p {
+        color: #4DD0E1 !important;
+    }
+    div[data-testid="stExpander"] summary:hover svg {
+        fill: #4DD0E1 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -504,7 +543,7 @@ if not master_df.empty:
             st.markdown("""
             **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).
             
-            **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot. 
+            **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
             * We apply a correction factor of approx **1.1% per 1,000 ft**.
             * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
             * The app strips away that 6% bonus so you can compare your "Denver 7-iron" to your "Florida 7-iron" fairly.
@@ -521,25 +560,79 @@ if not master_df.empty:
             """)
 
 else:
-    # --- HOMEGROWN WELCOME PAGE ---
+    # --- WELCOME SCREEN ---
     st.markdown("""
-    <div style="text-align: center; padding: 50px 0;">
+    <div style="text-align: center; padding: 40px 0;">
         <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
             Homegrown FS Pro Analytics
         </h1>
-        <p style="font-size: 24px; color: #B0B3B8; margin-top: 10px;">
+        <p style="font-size: 20px; color: #B0B3B8;">
             Turn your <b>Mevo+ and Mevo Gen 2</b> data into Tour-level insights.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
+    # SPLIT PATHS
+    c1, c2 = st.columns(2)
     with c1:
-        st.markdown('<div class="feature-card"><h3>🎯 Precision Targeting</h3><p style="color:#888">Visualize dispersion with dynamic target lanes based on your handicap.</p></div>', unsafe_allow_html=True)
+        st.info("🆕 **New User?**")
+        st.markdown("""
+        **Start Fresh:**
+        1. Open **Sidebar > My Bag Setup** to configure your lofts.
+        2. Open **Sidebar > Add Session** to upload your first CSV files.
+        3. Your database will be created automatically.
+        """)
     with c2:
-        st.markdown('<div class="feature-card"><h3>🎒 My Bag & Ranges</h3><p style="color:#888">Project your adjusted carry distances for any altitude.</p></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown('<div class="feature-card"><h3>📈 Historical Trends</h3><p style="color:#888">Track ball speed, accuracy, and consistency improvements over time.</p></div>', unsafe_allow_html=True)
+        st.warning("💾 **Returning User?**")
+        st.markdown("""
+        **Continue Journey:**
+        1. Open **Sidebar > Database Manager**.
+        2. Upload your saved `mevo_db.csv`.
+        3. Your bag settings and history will be restored instantly.
+        """)
 
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.info("👈 **Get Started:** Open the Sidebar to **Configure Your Bag** and **Add a New Session**.")
+    st.markdown("---")
+    
+    # Feature Grid
+    c_f1, c_f2, c_f3 = st.columns(3)
+    with c_f1:
+        st.markdown('<div class="feature-card"><h3>🎯 Precision Targeting</h3><p style="color:#888">Visualize dispersion with dynamic target lanes.</p></div>', unsafe_allow_html=True)
+    with c_f2:
+        st.markdown('<div class="feature-card"><h3>🎒 Smart Gapping</h3><p style="color:#888">Altitude-adjusted ranges for every club in your bag.</p></div>', unsafe_allow_html=True)
+    with c_f3:
+        st.markdown('<div class="feature-card"><h3>📈 Deep Trends</h3><p style="color:#888">Track consistency scores and ball speed gains.</p></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    
+    # FAQ Section on Welcome Screen
+    st.subheader("❓ FAQ & Help")
+    
+    with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
+        st.markdown("""
+        **The Problem:** Sometimes the radar misreads a shot (e.g., a 'ghost' 400-yard 7-iron) or you duff one 20 yards. These mess up your averages.
+        
+        **The Solution:** We use the **IQR (Interquartile Range)** method:
+        1. We calculate the middle 50% of your shots.
+        2. We remove any shot that is exceedingly far outside that range (statistical anomalies).
+        3. This gives you a 'True Average' of your *solid* strikes.
+        """)
+        
+    with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
+        st.markdown("""
+        **The Physics:** Golf balls fly further at higher altitudes because the air is thinner (less drag).
+        
+        **The Math:** We use the `Altitude (ft)` recorded by your Mevo+ for every single shot.
+        * We apply a correction factor of approx **1.1% per 1,000 ft**.
+        * **Example:** If you play in Denver (5,280 ft), your ball flies ~6% further than in Florida.
+        * The app strips away that 6% bonus so you can compare your "Denver 7-iron" to your "Florida 7-iron" fairly.
+        """)
+    
+    with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=False):
+        st.markdown("""
+        **Context:** A '7-Iron' isn't a standard unit of measurement.
+        * A modern 'Game Improvement' 7-iron might be **28°**.
+        * A traditional 'Blade' 7-iron might be **34°**.
+        
+        **The App:** To tell you if your Launch Angle is "Optimal" or "Too Low," the app needs to know the loft of the club you are holding. 
+        Setting this once ensures the 'Swing Mechanics' tab gives you accurate advice.
+        """)
