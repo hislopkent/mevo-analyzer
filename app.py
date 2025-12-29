@@ -37,15 +37,11 @@ if 'my_bag' not in st.session_state:
 # --- 2. DATABASES & HELPERS ---
 
 def get_dynamic_ranges(club_name, handicap):
-    """
-    Now pulls loft directly from the User's Bag Configuration.
-    """
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
     
-    # LOOKUP USER LOFT
-    # Try exact match, then fuzzy match, then default
+    # LOOKUP USER LOFT from Session State
     user_loft = st.session_state['my_bag'].get(club_name, 30.0)
 
     if 'driver' in c_lower:
@@ -105,7 +101,7 @@ def clean_mevo_data(df, filename, selected_date):
         df_clean['Altitude (ft)'] = df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',','')
         df_clean['Altitude (ft)'] = pd.to_numeric(df_clean['Altitude (ft)'], errors='coerce').fillna(0.0)
 
-    # Calculate Sea Level Carry (Normalize)
+    # Normalize
     df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
 
@@ -155,6 +151,15 @@ with st.sidebar:
                 try:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
+                    
+                    # --- NEW: RESTORE BAG CONFIG ---
+                    # Check if 'Ref Loft' exists in file, update My Bag with latest values
+                    if 'Ref Loft' in restored.columns:
+                        latest_lofts = restored.drop_duplicates('club', keep='last').set_index('club')['Ref Loft'].to_dict()
+                        # Update bag, but keep defaults if not found
+                        st.session_state['my_bag'].update(latest_lofts)
+                        st.toast("Bag Lofts Restored from Database!", icon="🎒")
+                    
                     st.session_state['master_df'] = restored
                     st.success(f"Restored {len(restored)} shots!")
                     st.rerun()
@@ -178,10 +183,18 @@ with st.sidebar:
                 try:
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
+                    
+                    # --- NEW: INJECT BAG LOFTS INTO DATA ---
+                    # Map the current loft to each row so it is saved forever
+                    clean['Ref Loft'] = clean['club'].map(st.session_state['my_bag'])
+                    
                     new_data.append(clean)
                 except Exception as e: st.error(f"Error {f.name}: {e}")
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
+                # Fill NaN lofts if a new club was added that isn't in default bag
+                batch_df['Ref Loft'] = batch_df['Ref Loft'].fillna(30.0)
+                
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
                 st.success(f"Added {len(batch_df)} shots!")
                 st.rerun()
@@ -191,13 +204,11 @@ with st.sidebar:
     # --- MY BAG CONFIG ---
     st.header("3. My Bag Setup")
     with st.expander("⚙️ Configure Club Lofts"):
-        st.info("Set your specific lofts here. The app will use these to calculate optimal launch & spin.")
+        st.info("Set your lofts here. They will be saved when you download your database.")
         
-        # Convert dictionary to DataFrame for editing
         bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
-        edited_bag = st.data_editor(bag_df, num_rows="dynamic", hide_index=True)
+        edited_bag = st.data_editor(bag_df, num_rows="dynamic", hide_index=True, key='bag_editor')
         
-        # Update Session State from Editor
         if not edited_bag.empty:
             updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
             st.session_state['my_bag'] = updated_dict
@@ -366,9 +377,13 @@ if not master_df.empty:
     with tab_mech:
         if len(filtered_df) > 0:
             st.subheader("🔬 Swing Mechanics")
-            # Pull Loft from Global Bag
-            mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
-            
+            c_sel1, c_sel2 = st.columns([2,1])
+            with c_sel1: mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
+            with c_sel2: 
+                # Display the current loft being used (read-only info)
+                curr_loft = st.session_state['my_bag'].get(mech_club, 30.0)
+                st.metric("Bag Loft", f"{curr_loft}°")
+
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
             col_m1, col_m2, col_m3 = st.columns(3)
