@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Mevo+ Pro Analytics", layout="wide", page_icon="⛳")
@@ -12,6 +13,7 @@ st.markdown("""
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
     h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
+    .trophy-card { background-color: #1E222B; padding: 15px; border-radius: 10px; border-left: 5px solid #FFD700; margin-bottom: 10px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,7 +57,7 @@ def get_dynamic_ranges(club_name, handicap, user_loft=None):
 
     return aoa, launch, spin
 
-def clean_mevo_data(df, filename, selected_date):
+def clean_mevo_data(df, filename, selected_date, normalize_ball=False):
     # Filter valid shots
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
     
@@ -89,7 +91,17 @@ def clean_mevo_data(df, filename, selected_date):
     for col in numeric_cols:
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-    
+            
+    # --- NORMALIZATION ENGINE ---
+    # Convert Range Balls to Premium Balls (Approx +10% Carry, +4% Ball Speed)
+    if normalize_ball:
+        if 'Carry (yds)' in df_clean.columns:
+            df_clean['Carry (yds)'] = df_clean['Carry (yds)'] * 1.10
+        if 'Total (yds)' in df_clean.columns:
+            df_clean['Total (yds)'] = df_clean['Total (yds)'] * 1.10
+        if 'Ball (mph)' in df_clean.columns:
+            df_clean['Ball (mph)'] = df_clean['Ball (mph)'] * 1.04
+            
     return df_clean
 
 def filter_outliers(df):
@@ -131,7 +143,7 @@ with st.sidebar:
     st.header("1. Database Manager")
     
     # A. RESTORE
-    with st.expander("📂 Load / Save History", expanded=True):
+    with st.expander("📂 Load / Save History", expanded=False):
         db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
         if db_file:
             if st.button("🔄 Restore Database"):
@@ -155,9 +167,14 @@ with st.sidebar:
                 st.rerun()
 
     # C. ADD NEW DATA
-    st.header("2. Add New Session")
+    st.header("2. Add Session")
     import_date = st.date_input("Date of Session")
-    uploaded_files = st.file_uploader("Upload CSVs for this Date", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
+    
+    # NORMALIZATION TOGGLE
+    normalize_on = st.checkbox("🔮 Range Ball Mode", value=False, 
+                              help="Multiplies Carry by 1.10x to simulate Premium Balls.")
+    
+    uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
     if st.button("➕ Add to Database"):
         if uploaded_files:
@@ -165,7 +182,8 @@ with st.sidebar:
             for f in uploaded_files:
                 try:
                     raw = pd.read_csv(f)
-                    clean = clean_mevo_data(raw, f.name, import_date)
+                    # Pass the Normalization Flag
+                    clean = clean_mevo_data(raw, f.name, import_date, normalize_on)
                     new_data.append(clean)
                 except Exception as e:
                     st.error(f"Error {f.name}: {e}")
@@ -173,7 +191,10 @@ with st.sidebar:
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
-                st.success(f"Added {len(batch_df)} shots from {import_date}!")
+                
+                msg = f"Added {len(batch_df)} shots from {import_date}!"
+                if normalize_on: msg += " (Normalized)"
+                st.success(msg)
                 st.rerun()
 
     st.markdown("---")
@@ -183,6 +204,28 @@ with st.sidebar:
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
+    # D. TROPHY ROOM
+    if not st.session_state['master_df'].empty:
+        st.markdown("---")
+        st.subheader("🏆 Personal Bests")
+        best_drive = st.session_state['master_df'][st.session_state['master_df']['club'] == 'Driver']['Carry (yds)'].max()
+        if pd.notna(best_drive):
+            st.markdown(f"""
+            <div class="trophy-card">
+                <b>🚀 Longest Drive</b><br>
+                <span style="font-size: 20px; color: #FFD700;">{best_drive:.1f} yds</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        max_ball_speed = st.session_state['master_df']['Ball (mph)'].max()
+        if pd.notna(max_ball_speed):
+             st.markdown(f"""
+            <div class="trophy-card">
+                <b>⚡ Max Ball Speed</b><br>
+                <span style="font-size: 20px; color: #FFD700;">{max_ball_speed:.1f} mph</span>
+            </div>
+            """, unsafe_allow_html=True)
+
 # --- 4. MAIN APP LOGIC ---
 master_df = st.session_state['master_df']
 
@@ -191,16 +234,13 @@ if not master_df.empty:
     # Apply Filters
     filtered_df = master_df.copy()
     
-    # 1. Environment Filter
     if env_mode == "Outdoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Outdoor", case=False, na=False)]
     elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
     
-    # 2. Smash Filter
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap]
 
-    # 3. Outlier Filter (Restored!)
     if remove_bad_shots:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0:
@@ -208,11 +248,10 @@ if not master_df.empty:
 
     # Stats Summary
     total_shots = len(filtered_df)
-    total_sessions = filtered_df['Date'].nunique() if 'Date' in filtered_df.columns else 0
-    st.caption(f"Analyzing {total_shots} shots across {total_sessions} sessions")
+    st.caption(f"Analyzing {total_shots} shots")
 
     # --- TABS ---
-    tab1, tab2, tab3, tab4 = st.tabs(["🎯 Target & Accuracy", "🎒 Gapping", "📈 Timeline", "🔬 Swing Mechanics"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 Target & Accuracy", "🎒 Gapping", "📈 Timeline", "🔬 Swing Mechanics", "⚔️ Comparison Lab"])
 
     # ================= TAB 1: TARGET =================
     with tab1:
@@ -294,8 +333,6 @@ if not master_df.empty:
                     st.plotly_chart(style_fig(fig), use_container_width=True)
                 else:
                     st.info("Add data from at least 2 different dates to see a trend line.")
-            else:
-                st.warning("No Date information found in database.")
 
     # ================= TAB 4: MECHANICS =================
     with tab4:
@@ -344,6 +381,63 @@ if not master_df.empty:
                     fig_path.add_hline(y=0, line_color="white", opacity=0.2)
                     fig_path.add_vline(x=0, line_color="white", opacity=0.2)
                     st.plotly_chart(style_fig(fig_path), use_container_width=True)
+
+    # ================= TAB 5: COMPARISON LAB (NEW) =================
+    with tab5:
+        st.subheader("⚔️ Comparison Lab")
+        st.info("Compare two sessions (e.g., 'Old Driver' vs 'New Driver') or dates.")
+        
+        comp_club = st.selectbox("Select Club to Compare", means.index, key='c_club')
+        club_data = filtered_df[filtered_df['club'] == comp_club]
+        
+        # Get Unique Session Identifiers (Date + Name)
+        if 'Date' in club_data.columns:
+            club_data['SessionLabel'] = club_data['Date'].dt.strftime('%Y-%m-%d') + ": " + club_data['Session']
+        else:
+            club_data['SessionLabel'] = club_data['Session']
+            
+        unique_sessions = club_data['SessionLabel'].unique()
+        
+        if len(unique_sessions) >= 2:
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                sess_a = st.selectbox("Session A (Baseline)", unique_sessions, index=0)
+            with col_sel2:
+                sess_b = st.selectbox("Session B (Challenger)", unique_sessions, index=1)
+                
+            if sess_a != sess_b:
+                data_a = club_data[club_data['SessionLabel'] == sess_a]
+                data_b = club_data[club_data['SessionLabel'] == sess_b]
+                
+                # HEAD TO HEAD METRICS
+                st.markdown("#### 📊 Head-to-Head Delta")
+                m1, m2, m3, m4 = st.columns(4)
+                
+                diff_carry = data_b['Carry (yds)'].mean() - data_a['Carry (yds)'].mean()
+                m1.metric("Carry Gain", f"{diff_carry:+.1f} yds", delta=diff_carry)
+                
+                diff_ball = data_b['Ball (mph)'].mean() - data_a['Ball (mph)'].mean()
+                m2.metric("Ball Speed", f"{diff_ball:+.1f} mph", delta=diff_ball)
+                
+                diff_disp = data_b['Lateral_Clean'].abs().mean() - data_a['Lateral_Clean'].abs().mean()
+                # Negative dispersion diff means B is tighter (Good)
+                m3.metric("Dispersion", f"{diff_disp:+.1f} yds", delta=-diff_disp, delta_color="inverse")
+                
+                diff_smash = data_b['Smash'].mean() - data_a['Smash'].mean()
+                m4.metric("Smash Eff.", f"{diff_smash:+.2f}", delta=diff_smash)
+                
+                # OVERLAID HISTOGRAM
+                st.markdown("#### 📏 Distance Distribution")
+                fig_hist = go.Figure()
+                fig_hist.add_trace(go.Histogram(x=data_a['Carry (yds)'], name='Session A', opacity=0.75, marker_color='#FF4081'))
+                fig_hist.add_trace(go.Histogram(x=data_b['Carry (yds)'], name='Session B', opacity=0.75, marker_color='#00E5FF'))
+                fig_hist.update_layout(barmode='overlay', title=f"Carry Distance: {sess_a} vs {sess_b}")
+                st.plotly_chart(style_fig(fig_hist), use_container_width=True)
+                
+            else:
+                st.warning("Select two different sessions to compare.")
+        else:
+            st.warning("You need at least 2 different sessions uploaded for this club to compare.")
 
 else:
     st.markdown("""
