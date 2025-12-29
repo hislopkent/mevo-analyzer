@@ -10,68 +10,85 @@ st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_
 # Custom CSS
 st.markdown("""
 <style>
-    /* 1. MAIN DARK THEME */
+    /* 1. FORCE MAIN DARK THEME */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     
-    /* 2. SIDEBAR SPECIFIC STYLING */
+    /* 2. SIDEBAR BACKGROUND & TEXT */
     section[data-testid="stSidebar"] {
         background-color: #12151d;
         border-right: 1px solid #333;
     }
     
-    /* Force Sidebar Header/Label Text White */
     section[data-testid="stSidebar"] h1, 
     section[data-testid="stSidebar"] h2, 
     section[data-testid="stSidebar"] h3, 
     section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] .stMarkdown p {
+    section[data-testid="stSidebar"] .stMarkdown p,
+    section[data-testid="stSidebar"] .stRadio label {
         color: #FAFAFA !important;
     }
 
-    /* FIX: Sidebar Close Button & Menu Icon */
-    section[data-testid="stSidebar"] button[kind="header"] {
+    /* 3. FIX SIDEBAR CLOSE/OPEN BUTTON (The 'X') */
+    /* This targets the button in the top right of the sidebar */
+    section[data-testid="stSidebar"] button {
         color: #FAFAFA !important;
     }
-    section[data-testid="stSidebar"] button[kind="header"] svg {
+    /* This specifically targets the SVG icon inside the button */
+    section[data-testid="stSidebar"] button svg {
         fill: #FAFAFA !important;
+        stroke: #FAFAFA !important;
     }
 
-    /* FIX: File Uploader Text (The "golf_lesson.csv" text) */
-    section[data-testid="stSidebar"] [data-testid='stFileUploader'] div,
-    section[data-testid="stSidebar"] [data-testid='stFileUploader'] span,
-    section[data-testid="stSidebar"] [data-testid='stFileUploader'] small {
+    /* 4. FIX FILE UPLOADER READABILITY */
+    [data-testid="stFileUploader"] {
+        background-color: #1E222B;
+        border-radius: 10px;
+        padding: 10px;
+    }
+    /* Force all text inside the uploader to be white */
+    [data-testid="stFileUploader"] div,
+    [data-testid="stFileUploader"] span,
+    [data-testid="stFileUploader"] small,
+    [data-testid="stFileUploader"] p {
         color: #FAFAFA !important;
     }
-    /* File Uploader Background */
-    [data-testid='stFileUploader'] section {
-        background-color: #1E222B !important;
-        border: 1px solid #444;
+    /* The uploaded file item background */
+    [data-testid="stFileUploader"] div[role="listitem"] {
+        background-color: #262730 !important;
+    }
+    /* The "Browse files" button */
+    [data-testid="stFileUploader"] button {
+        background-color: #262730 !important;
+        color: #FAFAFA !important;
+        border: 1px solid #444 !important;
     }
 
-    /* 3. EXPANDERS (FAQ & Sidebar) */
+    /* 5. EXPANDERS & FAQ (Fixing Hover/Dropdown issues) */
     div[data-testid="stExpander"] {
         background-color: #1E222B !important;
         border: 1px solid #444;
         border-radius: 5px;
-        color: #FAFAFA !important; /* Force content text white */
+        color: #FAFAFA !important;
     }
     
-    /* Expander Header (Summary) */
+    /* The Summary (Question) */
     div[data-testid="stExpander"] details > summary {
         color: #FAFAFA !important;
-        font-weight: 500;
     }
-    div[data-testid="stExpander"] details > summary:hover {
-        color: #4DD0E1 !important;
+    div[data-testid="stExpander"] details > summary p {
+        color: #FAFAFA !important;
+        font-weight: 500;
     }
     div[data-testid="stExpander"] details > summary svg {
         fill: #FAFAFA !important;
     }
-    div[data-testid="stExpander"] details > summary:hover svg {
-        fill: #4DD0E1 !important;
-    }
     
-    /* 4. TABS */
+    /* The Content (Answer) - Make sure it stays white */
+    div[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p {
+        color: #E0E0E0 !important; /* Slightly softer white for body text */
+    }
+
+    /* 6. TABS */
     div[data-testid="stTabs"] button {
         color: #E0E0E0 !important;
         font-weight: 500;
@@ -81,10 +98,8 @@ st.markdown("""
         border-top-color: #4DD0E1 !important;
     }
 
-    /* 5. GENERAL UI ELEMENTS */
+    /* 7. GENERAL METRICS & CARDS */
     div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
-    
-    /* Custom Cards */
     .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
     .stat-box { background-color: #1E222B; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px; border: 1px solid #444; }
 </style>
