@@ -30,16 +30,15 @@ DEFAULT_LOFTS = {
     'GW': 50.0, 'SW': 54.0, 'LW': 58.0
 }
 
+# Custom Sort Order for Display
+CLUB_SORT_ORDER = [
+    'Driver', '3 Wood', '5 Wood', '7 Wood', 'Hybrid', '2 Iron', '3 Iron', '4 Iron', 
+    '5 Iron', '6 Iron', '7 Iron', '8 Iron', '9 Iron', 'PW', 'GW', 'SW', 'LW'
+]
+
 # Initialize My Bag in Session State if not present
 if 'my_bag' not in st.session_state:
     st.session_state['my_bag'] = DEFAULT_LOFTS.copy()
-
-# CALLBACK: Updates bag immediately when editor changes
-def update_my_bag():
-    """Syncs the data editor changes back to the my_bag dictionary immediately."""
-    edited_df = st.session_state['bag_editor']
-    # Convert DF back to dictionary
-    st.session_state['my_bag'] = dict(zip(edited_df['Club'], edited_df['Loft']))
 
 # --- 2. DATABASES & HELPERS ---
 
@@ -48,7 +47,7 @@ def get_dynamic_ranges(club_name, handicap):
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
     
-    # LOOKUP USER LOFT
+    # LOOKUP USER LOFT from Session State
     user_loft = st.session_state['my_bag'].get(club_name, 30.0)
 
     if 'driver' in c_lower:
@@ -188,13 +187,11 @@ with st.sidebar:
                 try:
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
-                    # INJECT BAG LOFTS
                     clean['Ref Loft'] = clean['club'].map(st.session_state['my_bag'])
                     new_data.append(clean)
                 except Exception as e: st.error(f"Error {f.name}: {e}")
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
-                # Fill NaN lofts if a new club was added
                 batch_df['Ref Loft'] = batch_df['Ref Loft'].fillna(30.0)
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
                 st.success(f"Added {len(batch_df)} shots!")
@@ -205,19 +202,28 @@ with st.sidebar:
     # --- MY BAG CONFIG ---
     st.header("3. My Bag Setup")
     with st.expander("⚙️ Configure Club Lofts"):
-        st.info("Set your lofts here. They are saved automatically.")
+        st.info("Set your lofts here. Changes save automatically.")
         
-        # Prepare DataFrame (Sorted for stability)
-        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft']).sort_values('Club')
+        # 1. Convert Dictionary to DataFrame
+        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
         
-        # Editor with Callback
-        st.data_editor(
+        # 2. Smart Sort (Driver -> Wedges) instead of Alphabetical
+        bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
+        
+        # 3. Editor (No Callback needed now, simpler logic)
+        edited_bag = st.data_editor(
             bag_df, 
             num_rows="dynamic", 
             hide_index=True, 
-            key='bag_editor', 
-            on_change=update_my_bag
+            key='bag_editor'
         )
+        
+        # 4. Immediate Sync Logic
+        # This runs every time the script reruns (which happens on edit)
+        updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
+        if updated_dict != st.session_state['my_bag']:
+            st.session_state['my_bag'] = updated_dict
             
     # --- PLAYER CONFIG ---
     st.markdown("---")
@@ -281,7 +287,10 @@ if not master_df.empty:
             'Carry (yds)': 'max' 
         }).rename(columns={'Carry (yds)': 'Max Carry (Raw)'})
         
-        bag_stats = bag_stats.sort_values('SL_Carry', ascending=False)
+        # Sort using the Custom Sort Order
+        bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_stats = bag_stats.sort_values('SortIndex').drop(columns=['SortIndex'])
+        
         bag_stats['Adj. Carry'] = bag_stats['SL_Carry'] * alt_factor
         bag_stats['Adj. Total'] = bag_stats['SL_Total'] * alt_factor
         
@@ -305,8 +314,13 @@ if not master_df.empty:
     # ================= TAB: ACCURACY =================
     with tab_acc:
         if len(filtered_df) > 0:
-            club_order = filtered_df.groupby('club')['Carry (yds)'].mean().sort_values(ascending=False).index
-            selected_club = st.selectbox("Select Club", club_order, key='t1_club')
+            # Sort selector by custom order
+            avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
+            # Add any weird clubs not in list to end
+            extra_clubs = [c for c in filtered_df['club'].unique() if c not in CLUB_SORT_ORDER]
+            final_club_order = avail_clubs + extra_clubs
+            
+            selected_club = st.selectbox("Select Club", final_club_order, key='t1_club')
             subset = filtered_df[filtered_df['club'] == selected_club]
             
             if len(subset) > 0:
@@ -358,8 +372,11 @@ if not master_df.empty:
     with tab_gap:
         if len(filtered_df) > 0:
             st.subheader("🎒 Bag Gapping")
-            means = filtered_df.groupby("club")["Carry (yds)"].mean().sort_values(ascending=False)
-            fig = px.box(filtered_df, x='club', y='Carry (yds)', color='club', category_orders={'club': means.index}, points="all")
+            # Apply Custom Sort to Box Plot
+            filtered_df['SortIndex'] = filtered_df['club'].map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+            filtered_df_sorted = filtered_df.sort_values('SortIndex')
+            
+            fig = px.box(filtered_df_sorted, x='club', y='Carry (yds)', color='club', points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
 
     # ================= TAB: TIMELINE =================
@@ -367,7 +384,10 @@ if not master_df.empty:
         if len(filtered_df) > 0:
             st.subheader("📈 Timeline")
             c_t1, c_t2 = st.columns(2)
-            with c_t1: t_club = st.selectbox("Club", means.index, key='t_club')
+            # Use Sorted Club List
+            avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
+            
+            with c_t1: t_club = st.selectbox("Club", avail_clubs, key='t_club')
             with c_t2: metric = st.selectbox("Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash'])
             
             if 'Date' in filtered_df.columns:
@@ -384,7 +404,9 @@ if not master_df.empty:
         if len(filtered_df) > 0:
             st.subheader("🔬 Swing Mechanics")
             c_sel1, c_sel2 = st.columns([2,1])
-            with c_sel1: mech_club = st.selectbox("Analyze Club", means.index, key='m_club')
+            avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
+            
+            with c_sel1: mech_club = st.selectbox("Analyze Club", avail_clubs, key='m_club')
             with c_sel2: 
                 curr_loft = st.session_state['my_bag'].get(mech_club, 30.0)
                 st.metric("Bag Loft", f"{curr_loft}°")
@@ -433,7 +455,9 @@ if not master_df.empty:
     # ================= TAB: COMPARISON =================
     with tab_comp:
         st.subheader("⚔️ Comparison Lab")
-        comp_club = st.selectbox("Select Club to Compare", means.index, key='c_club')
+        avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
+        comp_club = st.selectbox("Select Club to Compare", avail_clubs, key='c_club')
+        
         club_data = filtered_df[filtered_df['club'] == comp_club].copy()
         
         if 'Date' in club_data.columns:
