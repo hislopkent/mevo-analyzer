@@ -17,7 +17,7 @@ st.markdown("""
 
 st.title("⛳ Mevo+ Pro Analytics")
 
-# --- 1. SETUP SESSION STATE (The Memory) ---
+# --- 1. SESSION STATE ---
 if 'master_df' not in st.session_state:
     st.session_state['master_df'] = pd.DataFrame()
 
@@ -61,7 +61,7 @@ def clean_mevo_data(df, filename, selected_date):
     
     # Add Metadata
     df_clean['Session'] = filename.replace('.csv', '')
-    df_clean['Date'] = pd.to_datetime(selected_date) # New Date Column
+    df_clean['Date'] = pd.to_datetime(selected_date)
     
     # Text Parsing Helper
     def parse_lr(val):
@@ -108,17 +108,39 @@ def style_fig(fig):
     fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# --- 3. SIDEBAR (IMPORTER) ---
+# --- 3. SIDEBAR (MANAGER) ---
 with st.sidebar:
-    st.header("1. Session Importer")
+    st.header("1. Database Manager")
     
-    # A. Date Picker
+    # A. RESTORE
+    with st.expander("📂 Load / Save History", expanded=True):
+        db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
+        if db_file:
+            if st.button("🔄 Restore Database"):
+                try:
+                    restored = pd.read_csv(db_file)
+                    if 'Date' in restored.columns:
+                        restored['Date'] = pd.to_datetime(restored['Date'])
+                    st.session_state['master_df'] = restored
+                    st.success(f"Restored {len(restored)} shots!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        # B. EXPORT
+        if not st.session_state['master_df'].empty:
+            csv_data = st.session_state['master_df'].to_csv(index=False).encode('utf-8')
+            st.download_button("💾 Save Database", csv_data, "mevo_db.csv", "text/csv")
+            
+            if st.button("🗑️ Clear All"):
+                st.session_state['master_df'] = pd.DataFrame()
+                st.rerun()
+
+    # C. ADD NEW DATA
+    st.header("2. Add New Session")
     import_date = st.date_input("Date of Session")
-    
-    # B. File Uploader
     uploaded_files = st.file_uploader("Upload CSVs for this Date", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
-    # C. Add Button
     if st.button("➕ Add to Database"):
         if uploaded_files:
             new_data = []
@@ -128,29 +150,13 @@ with st.sidebar:
                     clean = clean_mevo_data(raw, f.name, import_date)
                     new_data.append(clean)
                 except Exception as e:
-                    st.error(f"Error reading {f.name}: {e}")
+                    st.error(f"Error {f.name}: {e}")
             
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
-                # Append to Session State
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
                 st.success(f"Added {len(batch_df)} shots from {import_date}!")
-        else:
-            st.warning("Please select a file first.")
-
-    # D. Database Status
-    st.markdown("---")
-    st.header("2. Database Status")
-    if not st.session_state['master_df'].empty:
-        total_shots = len(st.session_state['master_df'])
-        total_days = st.session_state['master_df']['Date'].nunique()
-        st.info(f"💾 Loaded: {total_shots} shots across {total_days} days.")
-        
-        if st.button("🗑️ Clear All Data"):
-            st.session_state['master_df'] = pd.DataFrame()
-            st.rerun()
-    else:
-        st.info("Database is empty. Add sessions above.")
+                st.rerun()
 
     st.markdown("---")
     st.header("3. Player Config")
@@ -172,6 +178,11 @@ if not master_df.empty:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
         
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap]
+
+    # Stats Summary
+    total_shots = len(filtered_df)
+    total_sessions = filtered_df['Date'].nunique() if 'Date' in filtered_df.columns else 0
+    st.caption(f"Analyzing {total_shots} shots across {total_sessions} sessions")
 
     # --- TABS ---
     tab1, tab2, tab3, tab4 = st.tabs(["🎯 Target & Accuracy", "🎒 Gapping", "📈 Timeline", "🔬 Swing Mechanics"])
@@ -235,22 +246,24 @@ if not master_df.empty:
         fig = px.box(filtered_df, x='club', y='Carry (yds)', color='club', category_orders={'club': means.index}, points="all")
         st.plotly_chart(style_fig(fig), use_container_width=True)
 
-    # ================= TAB 3: TIMELINE (UPDATED FOR DATES) =================
+    # ================= TAB 3: TIMELINE =================
     with tab3:
         st.subheader("📈 Timeline Progress")
         c_t1, c_t2 = st.columns(2)
         with c_t1: t_club = st.selectbox("Club", means.index, key='t_club')
         with c_t2: metric = st.selectbox("Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash'])
         
-        # Group by DATE instead of Session Name
-        trend = filtered_df[filtered_df['club'] == t_club].groupby('Date')[metric].mean().reset_index().sort_values('Date')
-        
-        if len(trend) > 1:
-            fig = px.line(trend, x='Date', y=metric, markers=True, title=f"{t_club} Progress over Time")
-            fig.update_traces(line_color='#00E676', line_width=4)
-            st.plotly_chart(style_fig(fig), use_container_width=True)
+        if 'Date' in filtered_df.columns:
+            trend = filtered_df[filtered_df['club'] == t_club].groupby('Date')[metric].mean().reset_index().sort_values('Date')
+            
+            if len(trend) > 1:
+                fig = px.line(trend, x='Date', y=metric, markers=True, title=f"{t_club} Progress over Time")
+                fig.update_traces(line_color='#00E676', line_width=4)
+                st.plotly_chart(style_fig(fig), use_container_width=True)
+            else:
+                st.info("Add data from at least 2 different dates to see a trend line.")
         else:
-            st.info("Add data from at least 2 different dates to see a trend line.")
+            st.warning("No Date information found in database.")
 
     # ================= TAB 4: MECHANICS =================
     with tab4:
@@ -284,7 +297,8 @@ if not master_df.empty:
         with col_chart_m1:
             if 'Launch V (°)' in mech_data.columns and 'Spin (rpm)' in mech_data.columns:
                 fig_opt = px.scatter(mech_data, x='Spin (rpm)', y='Launch V (°)', 
-                                   color='Date', size='Carry (yds)', title=f"Optimization: {mech_club}")
+                                   color='Date' if 'Date' in mech_data.columns else 'Session', 
+                                   size='Carry (yds)', title=f"Optimization: {mech_club}")
                 ranges = get_dynamic_ranges(mech_club, handicap, user_loft)
                 launch_r, spin_r = ranges[1], ranges[2]
                 fig_opt.add_shape(type="rect", x0=spin_r[0], y0=launch_r[0], x1=spin_r[1], y1=launch_r[1],
@@ -302,6 +316,6 @@ else:
     st.markdown("""
     <div style="text-align: center; margin-top: 50px;">
         <h1>🏌️‍♂️ Ready to Practice?</h1>
-        <p style="font-size: 18px; color: #888;">Use the sidebar to pick a date and upload your session files.</p>
+        <p style="font-size: 18px; color: #888;">Use the sidebar to <b>Restore Database</b> or <b>Add New Session</b>.</p>
     </div>
     """, unsafe_allow_html=True)
