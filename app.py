@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="My FS Pro Analytics", layout="wide", page_icon="⛳")
+st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_icon="⛳")
 
 # Custom CSS for "Pro" Look
 st.markdown("""
@@ -213,8 +213,8 @@ master_df = st.session_state['master_df']
 
 if not master_df.empty:
     
-    # 1. Main Title for Dashboard
-    st.title("⛳ My FS Pro Analytics")
+    # 1. Main Title
+    st.title("⛳ Homegrown FS Pro Analytics")
     
     # 2. Filters
     filtered_df = master_df.copy()
@@ -411,14 +411,14 @@ if not master_df.empty:
             st.warning("Need 2+ sessions for this club.")
 
 else:
-    # --- PRO WELCOME PAGE ---
+    # --- HOMEGROWN WELCOME PAGE ---
     st.markdown("""
     <div style="text-align: center; padding: 50px 0;">
         <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-            My FS Pro Analytics
+            Homegrown FS Pro Analytics
         </h1>
         <p style="font-size: 24px; color: #B0B3B8; margin-top: 10px;">
-            Turn your FlightScope Mevo+ data into Tour-level insights.
+            Turn your <b>Mevo+ and Mevo Gen 2</b> data into Tour-level insights.
         </p>
     </div>
     """, unsafe_allow_html=True)
