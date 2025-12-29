@@ -248,26 +248,36 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # --- MY BAG CONFIG ---
+    # --- MY BAG CONFIG (MOBILE FRIENDLY) ---
     st.header("3. My Bag Setup")
-    with st.expander("⚙️ Configure Club Lofts"):
-        st.info("Set your lofts here. They will be saved when you download your database.")
+    with st.expander("⚙️ Edit Club Lofts"):
+        # 1. Selector (Easy to tap)
+        selected_club = st.selectbox("Choose Club:", CLUB_SORT_ORDER, index=0)
         
+        # 2. Current Value Safe Get
+        current_loft = st.session_state['my_bag'].get(selected_club, DEFAULT_LOFTS.get(selected_club, 30.0))
+        
+        # 3. Stepper (Best for mobile edits)
+        new_loft = st.number_input(
+            f"Loft for {selected_club} (°)", 
+            value=float(current_loft), 
+            step=0.5,
+            format="%.1f"
+        )
+        
+        # 4. Big Update Button
+        if st.button("💾 Save Loft Change", type="primary", use_container_width=True):
+            st.session_state['my_bag'][selected_club] = new_loft
+            st.toast(f"Saved: {selected_club} @ {new_loft}°", icon="✅")
+            
+        st.markdown("---")
+        
+        # 5. Read-Only Summary Table
+        st.caption("Current Configuration:")
         bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        
-        edited_bag = st.data_editor(
-            bag_df, 
-            num_rows="dynamic", 
-            hide_index=True, 
-            key='bag_editor'
-        )
-        
-        # Immediate Sync
-        updated_dict = dict(zip(edited_bag['Club'], edited_bag['Loft']))
-        if updated_dict != st.session_state['my_bag']:
-            st.session_state['my_bag'] = updated_dict
+        st.dataframe(bag_df, hide_index=True, use_container_width=True, height=200)
             
     # --- PLAYER CONFIG ---
     st.markdown("---")
