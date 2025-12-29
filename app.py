@@ -202,11 +202,6 @@ def filter_outliers(df):
         club_data = df[df['club'] == club].copy()
         
         # --- STAGE 1: PHYSICS SANITY CHECK ---
-        # Removing impossible shots first
-        # 1. Smash Factor > 1.58 is usually a sensor error (Max legal is ~1.52)
-        # 2. Spin < 500 is usually a "knuckleball" read error (unless it's a putter, but unlikely here)
-        # 3. Height < 8 ft is a topped shot
-        
         valid_physics = club_data[
             (club_data['Smash'] <= 1.58) & 
             (club_data['Smash'] >= 1.0) &
@@ -397,7 +392,6 @@ if not master_df.empty:
             return clean['SL_Carry'].max()
 
         # Aggregation
-        # We need a custom apply because standard agg functions don't see other columns
         bag_data = []
         for club in filtered_df['club'].unique():
             subset = filtered_df[filtered_df['club'] == club]
@@ -444,8 +438,21 @@ if not master_df.empty:
             subset = filtered_df[filtered_df['club'] == selected_club]
             
             if len(subset) > 0:
-                is_scoring = any(x in str(selected_club).lower() for x in ['8','9','p','w','s','l','g'])
-                target_val = 5.0 + (handicap * 0.4) if is_scoring else 15.0 + (handicap * 0.8)
+                # 3-TIER TARGET LOGIC
+                c_name = str(selected_club).lower()
+                
+                # 1. TEE SHOTS (Driver, Woods, Hybrids)
+                if 'driver' in c_name or 'wood' in c_name or 'hybrid' in c_name:
+                    target_val = 15.0 + (handicap * 0.5) # Wide Fairway
+                    target_type = "Fairway Lane"
+                # 2. APPROACH (Irons 2-7)
+                elif any(x in c_name for x in ['2','3','4','5','6','7']):
+                    target_val = 10.0 + (handicap * 0.4) # Green Width
+                    target_type = "Approach Lane"
+                # 3. SCORING (8,9, Wedges)
+                else:
+                    target_val = 5.0 + (handicap * 0.25) # Pin Seeking
+                    target_type = "Pin Radius"
                 
                 # New Tendency Metric
                 lat_mean = subset['Lateral_Clean'].mean()
@@ -453,7 +460,7 @@ if not master_df.empty:
                 
                 c1, c2, c3, c4 = st.columns(4)
                 on_target = len(subset[abs(subset['Lateral_Clean']) <= target_val]) / len(subset) * 100
-                c1.metric("Accuracy Score", f"{on_target:.0f}%", f"Target: ±{target_val:.1f}y")
+                c1.metric("Accuracy Score", f"{on_target:.0f}%", f"{target_type}: ±{target_val:.1f}y")
                 c2.metric("Tendency", f"{abs(lat_mean):.1f}y", tendency_dir)
                 c3.metric("Avg Carry", f"{subset['Carry (yds)'].mean():.1f}")
                 c4.metric("Ball Speed", f"{subset['Ball (mph)'].mean():.1f}")
@@ -594,10 +601,7 @@ if not master_df.empty:
     with tab_faq:
         st.subheader("❓ FAQ & Help")
         with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
-            st.markdown("""
-            **The Problem:** Sometimes the radar misreads a shot (e.g., a 'ghost' 400-yard 7-iron) or you duff one 20 yards.
-            **The Solution:** We now run a **Physics Sanity Check** (removing shots with impossible spin or smash factor) *before* applying the **IQR Method** to filter out statistical outliers.
-            """)
+            st.markdown("We use the **IQR method** to strip out misreads and duffs.")
         with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
             st.markdown("We apply a **1.1% per 1,000 ft** correction to simulate Sea Level performance.")
         with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=False):
@@ -639,6 +643,6 @@ else:
     st.markdown("---")
     st.subheader("❓ FAQ & Help")
     with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
-        st.markdown("We use the **IQR method** combined with physics checks to strip out misreads and duffs.")
+        st.markdown("We use the **IQR method** to strip out misreads and duffs.")
     with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
         st.markdown("We apply a **1.1% per 1,000 ft** correction to simulate Sea Level performance.")
