@@ -197,19 +197,47 @@ def clean_mevo_data(df, filename, selected_date):
 def filter_outliers(df):
     df_filtered = pd.DataFrame()
     outlier_count = 0
+    
     for club in df['club'].unique():
         club_data = df[df['club'] == club].copy()
-        if len(club_data) < 5:
-            df_filtered = pd.concat([df_filtered, club_data])
+        
+        # --- STAGE 1: PHYSICS SANITY CHECK ---
+        # Removing impossible shots first
+        # 1. Smash Factor > 1.58 is usually a sensor error (Max legal is ~1.52)
+        # 2. Spin < 500 is usually a "knuckleball" read error (unless it's a putter, but unlikely here)
+        # 3. Height < 8 ft is a topped shot
+        
+        valid_physics = club_data[
+            (club_data['Smash'] <= 1.58) & 
+            (club_data['Smash'] >= 1.0) &
+            (club_data['Spin (rpm)'] > 500) & 
+            (club_data['Height (ft)'] > 8)
+        ]
+        
+        dropped_physics = len(club_data) - len(valid_physics)
+        
+        if len(valid_physics) < 5:
+            df_filtered = pd.concat([df_filtered, valid_physics])
+            outlier_count += dropped_physics
             continue
-        q1 = club_data['Carry (yds)'].quantile(0.25)
-        q3 = club_data['Carry (yds)'].quantile(0.75)
+
+        # --- STAGE 2: STATISTICAL IQR CHECK (Distance) ---
+        q1 = valid_physics['Carry (yds)'].quantile(0.25)
+        q3 = valid_physics['Carry (yds)'].quantile(0.75)
         iqr = q3 - q1
         lower = q1 - (1.5 * iqr) 
-        upper = q3 + (3.0 * iqr) 
-        valid = club_data[(club_data['Carry (yds)'] >= lower) & (club_data['Carry (yds)'] <= upper)]
-        outlier_count += (len(club_data) - len(valid))
-        df_filtered = pd.concat([df_filtered, valid])
+        upper = q3 + (3.0 * iqr) # Allow more upside variance for good shots
+        
+        final_valid = valid_physics[
+            (valid_physics['Carry (yds)'] >= lower) & 
+            (valid_physics['Carry (yds)'] <= upper)
+        ]
+        
+        dropped_stat = len(valid_physics) - len(final_valid)
+        outlier_count += (dropped_physics + dropped_stat)
+        
+        df_filtered = pd.concat([df_filtered, final_valid])
+        
     return df_filtered, outlier_count
 
 def check_range(club_name, value, metric_idx, handicap):
@@ -356,15 +384,40 @@ if not master_df.empty:
             alt_factor = 1 + (play_alt / 1000.0 * 0.011)
             if play_alt > 0: st.caption(f"Boost: +{((alt_factor-1)*100):.1f}%")
 
-        bag_stats = filtered_df.groupby('club').agg({
-            'SL_Carry': 'mean', 'SL_Total': 'mean', 'Ball (mph)': 'mean', 'Carry (yds)': ['max', 'count']
-        })
-        bag_stats.columns = ['SL_Carry', 'SL_Total', 'Ball Speed', 'Max Carry', 'Count']
+        # Smart Max Calculation (Matches Filter Logic)
+        def get_smart_max(series, df_subset):
+            # We must use the indices from the series to filter the subset correctly
+            valid = df_subset.loc[series.index]
+            # Apply same physics checks as filter_outliers
+            clean = valid[
+                (valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) &
+                (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)
+            ]
+            if clean.empty: return series.max()
+            return clean['SL_Carry'].max()
+
+        # Aggregation
+        # We need a custom apply because standard agg functions don't see other columns
+        bag_data = []
+        for club in filtered_df['club'].unique():
+            subset = filtered_df[filtered_df['club'] == club]
+            s_max = get_smart_max(subset['SL_Carry'], subset)
+            bag_data.append({
+                'Club': club,
+                'SL_Carry': subset['SL_Carry'].mean(),
+                'SL_Total': subset['SL_Total'].mean(),
+                'Ball Speed': subset['Ball (mph)'].mean(),
+                'Max Carry': s_max,
+                'Count': len(subset)
+            })
         
+        bag_stats = pd.DataFrame(bag_data).set_index('Club')
         bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_stats = bag_stats.sort_values('SortIndex')
+        
         bag_stats['Adj. Carry'] = bag_stats['SL_Carry'] * alt_factor
         bag_stats['Adj. Total'] = bag_stats['SL_Total'] * alt_factor
+        bag_stats['Adj. Max'] = bag_stats['Max Carry'] * alt_factor
         
         st.write("---")
         cols = st.columns(4)
@@ -378,7 +431,7 @@ if not master_df.empty:
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
                         <span>Speed: {row['Ball Speed']:.0f}</span>
-                        <span style="color: #FFD700;">Max: {row['Max Carry']:.0f}</span>
+                        <span style="color: #FFD700;">Pot: {row['Adj. Max']:.0f}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -541,7 +594,10 @@ if not master_df.empty:
     with tab_faq:
         st.subheader("❓ FAQ & Help")
         with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
-            st.markdown("We use the **IQR (Interquartile Range)** method to remove misreads and duffs based on the middle 50% of your shots.")
+            st.markdown("""
+            **The Problem:** Sometimes the radar misreads a shot (e.g., a 'ghost' 400-yard 7-iron) or you duff one 20 yards.
+            **The Solution:** We now run a **Physics Sanity Check** (removing shots with impossible spin or smash factor) *before* applying the **IQR Method** to filter out statistical outliers.
+            """)
         with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
             st.markdown("We apply a **1.1% per 1,000 ft** correction to simulate Sea Level performance.")
         with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=False):
@@ -583,6 +639,6 @@ else:
     st.markdown("---")
     st.subheader("❓ FAQ & Help")
     with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
-        st.markdown("We use the **IQR method** to strip out misreads and duffs.")
+        st.markdown("We use the **IQR method** combined with physics checks to strip out misreads and duffs.")
     with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
         st.markdown("We apply a **1.1% per 1,000 ft** correction to simulate Sea Level performance.")
