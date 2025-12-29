@@ -5,19 +5,37 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Mevo+ Pro Analytics", layout="wide", page_icon="⛳")
+st.set_page_config(page_title="My FS Pro Analytics", layout="wide", page_icon="⛳")
 
-# Custom CSS
+# Custom CSS for "Pro" Look
 st.markdown("""
 <style>
+    /* Dark Theme Background */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
+    
+    /* Metrics */
     div[data-testid="stMetricValue"] { font-size: 24px; color: #4DD0E1; }
+    div[data-testid="stMetricDelta"] { font-size: 16px; }
+    
+    /* Headers */
     h1, h2, h3 { color: #FAFAFA; font-family: 'Helvetica Neue', sans-serif; }
+    
+    /* Trophy Card */
     .trophy-card { background-color: #1E222B; padding: 15px; border-radius: 10px; border-left: 5px solid #FFD700; margin-bottom: 10px;}
+    
+    /* Feature Card on Welcome Page */
+    .feature-card {
+        background-color: #1E222B;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        border: 1px solid #333;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⛳ Mevo+ Pro Analytics")
+# Main Title (Hidden on Landing Page for cleaner look, shown in sidebar or top bar mostly)
+# We will use a custom Hero title on the landing page instead.
 
 # --- 1. SESSION STATE ---
 if 'master_df' not in st.session_state:
@@ -58,14 +76,10 @@ def get_dynamic_ranges(club_name, handicap, user_loft=None):
     return aoa, launch, spin
 
 def clean_mevo_data(df, filename, selected_date, normalize_ball=False):
-    # Filter valid shots
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
-    
-    # Add Metadata
     df_clean['Session'] = filename.replace('.csv', '')
     df_clean['Date'] = pd.to_datetime(selected_date)
     
-    # Text Parsing Helper
     def parse_lr(val):
         if pd.isna(val): return 0.0
         s_val = str(val).strip()
@@ -92,8 +106,6 @@ def clean_mevo_data(df, filename, selected_date, normalize_ball=False):
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
             
-    # --- NORMALIZATION ENGINE ---
-    # Convert Range Balls to Premium Balls (Approx +10% Carry, +4% Ball Speed)
     if normalize_ball:
         if 'Carry (yds)' in df_clean.columns:
             df_clean['Carry (yds)'] = df_clean['Carry (yds)'] * 1.10
@@ -142,7 +154,6 @@ def style_fig(fig):
 with st.sidebar:
     st.header("1. Database Manager")
     
-    # A. RESTORE
     with st.expander("📂 Load / Save History", expanded=False):
         db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
         if db_file:
@@ -157,7 +168,6 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Error: {e}")
         
-        # B. EXPORT
         if not st.session_state['master_df'].empty:
             csv_data = st.session_state['master_df'].to_csv(index=False).encode('utf-8')
             st.download_button("💾 Save Database", csv_data, "mevo_db.csv", "text/csv")
@@ -166,14 +176,9 @@ with st.sidebar:
                 st.session_state['master_df'] = pd.DataFrame()
                 st.rerun()
 
-    # C. ADD NEW DATA
     st.header("2. Add Session")
     import_date = st.date_input("Date of Session")
-    
-    # NORMALIZATION TOGGLE
-    normalize_on = st.checkbox("🔮 Range Ball Mode", value=False, 
-                              help="Multiplies Carry by 1.10x to simulate Premium Balls.")
-    
+    normalize_on = st.checkbox("🔮 Range Ball Mode", value=False, help="Multiplies Carry by 1.10x to simulate Premium Balls.")
     uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
     if st.button("➕ Add to Database"):
@@ -182,7 +187,6 @@ with st.sidebar:
             for f in uploaded_files:
                 try:
                     raw = pd.read_csv(f)
-                    # Pass the Normalization Flag
                     clean = clean_mevo_data(raw, f.name, import_date, normalize_on)
                     new_data.append(clean)
                 except Exception as e:
@@ -191,10 +195,7 @@ with st.sidebar:
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
                 st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
-                
-                msg = f"Added {len(batch_df)} shots from {import_date}!"
-                if normalize_on: msg += " (Normalized)"
-                st.success(msg)
+                st.success(f"Added {len(batch_df)} shots!")
                 st.rerun()
 
     st.markdown("---")
@@ -204,36 +205,27 @@ with st.sidebar:
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
-    # D. TROPHY ROOM
     if not st.session_state['master_df'].empty:
         st.markdown("---")
         st.subheader("🏆 Personal Bests")
         best_drive = st.session_state['master_df'][st.session_state['master_df']['club'] == 'Driver']['Carry (yds)'].max()
         if pd.notna(best_drive):
-            st.markdown(f"""
-            <div class="trophy-card">
-                <b>🚀 Longest Drive</b><br>
-                <span style="font-size: 20px; color: #FFD700;">{best_drive:.1f} yds</span>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="trophy-card"><b>🚀 Longest Drive</b><br><span style="font-size: 20px; color: #FFD700;">{best_drive:.1f} yds</span></div>""", unsafe_allow_html=True)
             
         max_ball_speed = st.session_state['master_df']['Ball (mph)'].max()
         if pd.notna(max_ball_speed):
-             st.markdown(f"""
-            <div class="trophy-card">
-                <b>⚡ Max Ball Speed</b><br>
-                <span style="font-size: 20px; color: #FFD700;">{max_ball_speed:.1f} mph</span>
-            </div>
-            """, unsafe_allow_html=True)
+             st.markdown(f"""<div class="trophy-card"><b>⚡ Max Ball Speed</b><br><span style="font-size: 20px; color: #FFD700;">{max_ball_speed:.1f} mph</span></div>""", unsafe_allow_html=True)
 
 # --- 4. MAIN APP LOGIC ---
 master_df = st.session_state['master_df']
 
 if not master_df.empty:
     
-    # Apply Filters
-    filtered_df = master_df.copy()
+    # 1. Main Title for Dashboard
+    st.title("⛳ My FS Pro Analytics")
     
+    # 2. Filters
+    filtered_df = master_df.copy()
     if env_mode == "Outdoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Outdoor", case=False, na=False)]
     elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
@@ -246,9 +238,7 @@ if not master_df.empty:
         if dropped_count > 0:
             st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    # Stats Summary
-    total_shots = len(filtered_df)
-    st.caption(f"Analyzing {total_shots} shots")
+    st.caption(f"Analyzing {len(filtered_df)} shots")
 
     # --- TABS ---
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 Target & Accuracy", "🎒 Gapping", "📈 Timeline", "🔬 Swing Mechanics", "⚔️ Comparison Lab"])
@@ -326,13 +316,14 @@ if not master_df.empty:
             
             if 'Date' in filtered_df.columns:
                 trend = filtered_df[filtered_df['club'] == t_club].groupby('Date')[metric].mean().reset_index().sort_values('Date')
-                
                 if len(trend) > 1:
                     fig = px.line(trend, x='Date', y=metric, markers=True, title=f"{t_club} Progress over Time")
                     fig.update_traces(line_color='#00E676', line_width=4)
                     st.plotly_chart(style_fig(fig), use_container_width=True)
                 else:
                     st.info("Add data from at least 2 different dates to see a trend line.")
+            else:
+                st.warning("No Date information found in database.")
 
     # ================= TAB 4: MECHANICS =================
     with tab4:
@@ -382,15 +373,12 @@ if not master_df.empty:
                     fig_path.add_vline(x=0, line_color="white", opacity=0.2)
                     st.plotly_chart(style_fig(fig_path), use_container_width=True)
 
-    # ================= TAB 5: COMPARISON LAB (NEW) =================
+    # ================= TAB 5: COMPARISON =================
     with tab5:
         st.subheader("⚔️ Comparison Lab")
-        st.info("Compare two sessions (e.g., 'Old Driver' vs 'New Driver') or dates.")
-        
         comp_club = st.selectbox("Select Club to Compare", means.index, key='c_club')
-        club_data = filtered_df[filtered_df['club'] == comp_club]
+        club_data = filtered_df[filtered_df['club'] == comp_club].copy()
         
-        # Get Unique Session Identifiers (Date + Name)
         if 'Date' in club_data.columns:
             club_data['SessionLabel'] = club_data['Date'].dt.strftime('%Y-%m-%d') + ": " + club_data['Session']
         else:
@@ -400,19 +388,14 @@ if not master_df.empty:
         
         if len(unique_sessions) >= 2:
             col_sel1, col_sel2 = st.columns(2)
-            with col_sel1:
-                sess_a = st.selectbox("Session A (Baseline)", unique_sessions, index=0)
-            with col_sel2:
-                sess_b = st.selectbox("Session B (Challenger)", unique_sessions, index=1)
+            with col_sel1: sess_a = st.selectbox("Session A (Baseline)", unique_sessions, index=0)
+            with col_sel2: sess_b = st.selectbox("Session B (Challenger)", unique_sessions, index=1)
                 
             if sess_a != sess_b:
                 data_a = club_data[club_data['SessionLabel'] == sess_a]
                 data_b = club_data[club_data['SessionLabel'] == sess_b]
                 
-                # HEAD TO HEAD METRICS
-                st.markdown("#### 📊 Head-to-Head Delta")
                 m1, m2, m3, m4 = st.columns(4)
-                
                 diff_carry = data_b['Carry (yds)'].mean() - data_a['Carry (yds)'].mean()
                 m1.metric("Carry Gain", f"{diff_carry:+.1f} yds", delta=diff_carry)
                 
@@ -420,29 +403,41 @@ if not master_df.empty:
                 m2.metric("Ball Speed", f"{diff_ball:+.1f} mph", delta=diff_ball)
                 
                 diff_disp = data_b['Lateral_Clean'].abs().mean() - data_a['Lateral_Clean'].abs().mean()
-                # Negative dispersion diff means B is tighter (Good)
                 m3.metric("Dispersion", f"{diff_disp:+.1f} yds", delta=-diff_disp, delta_color="inverse")
                 
                 diff_smash = data_b['Smash'].mean() - data_a['Smash'].mean()
                 m4.metric("Smash Eff.", f"{diff_smash:+.2f}", delta=diff_smash)
                 
-                # OVERLAID HISTOGRAM
-                st.markdown("#### 📏 Distance Distribution")
                 fig_hist = go.Figure()
                 fig_hist.add_trace(go.Histogram(x=data_a['Carry (yds)'], name='Session A', opacity=0.75, marker_color='#FF4081'))
                 fig_hist.add_trace(go.Histogram(x=data_b['Carry (yds)'], name='Session B', opacity=0.75, marker_color='#00E5FF'))
-                fig_hist.update_layout(barmode='overlay', title=f"Carry Distance: {sess_a} vs {sess_b}")
+                fig_hist.update_layout(barmode='overlay', title=f"Carry Distance Distribution")
                 st.plotly_chart(style_fig(fig_hist), use_container_width=True)
-                
             else:
                 st.warning("Select two different sessions to compare.")
         else:
-            st.warning("You need at least 2 different sessions uploaded for this club to compare.")
+            st.warning("Need 2+ sessions for this club.")
 
 else:
+    # --- PRO WELCOME PAGE ---
     st.markdown("""
-    <div style="text-align: center; margin-top: 50px;">
-        <h1>🏌️‍♂️ Ready to Practice?</h1>
-        <p style="font-size: 18px; color: #888;">Use the sidebar to <b>Restore Database</b> or <b>Add New Session</b>.</p>
+    <div style="text-align: center; padding: 50px 0;">
+        <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            My FS Pro Analytics
+        </h1>
+        <p style="font-size: 24px; color: #B0B3B8; margin-top: 10px;">
+            Turn your FlightScope Mevo+ data into Tour-level insights.
+        </p>
     </div>
     """, unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown('<div class="feature-card"><h3>🎯 Precision Targeting</h3><p style="color:#888">Visualize dispersion with dynamic target lanes based on your handicap.</p></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="feature-card"><h3>🎒 Gapping Analysis</h3><p style="color:#888">Understand your true carry distances and identify gaps in your bag.</p></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown('<div class="feature-card"><h3>📈 Historical Trends</h3><p style="color:#888">Track ball speed, accuracy, and consistency improvements over time.</p></div>', unsafe_allow_html=True)
+
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.info("👈 **Get Started:** Open the Sidebar to **Add a New Session** or **Restore your Database**.")
