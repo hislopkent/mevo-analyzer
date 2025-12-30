@@ -188,95 +188,30 @@ active_user = st.session_state['active_user']
 master_df = st.session_state['profiles'][active_user]['df']
 my_bag = st.session_state['profiles'][active_user]['bag']
 
-# --- 2. OPTIMIZED HELPERS ---
+# --- 2. HELPERS (Global Scope Safe) ---
 
-@st.cache_data
-def clean_mevo_data(df, filename, selected_date):
-    """
-    Optimized data cleaner using vectorized string operations.
-    """
-    df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
-    df_clean['Session'] = filename.replace('.csv', '')
-    
-    # Efficient date handling
-    if 'Date' in df_clean.columns:
-        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').fillna(pd.to_datetime(selected_date))
-    else:
-        df_clean['Date'] = pd.to_datetime(selected_date)
-    
-    # Vectorized Lateral Parsing
-    # Logic: If contains 'L', make negative. If 'R' or just number, keep positive.
-    if 'Lateral (yds)' in df_clean.columns:
-        # Extract numeric part
-        lat_str = df_clean['Lateral (yds)'].astype(str).str.upper()
-        # Create mask for Left
-        is_left = lat_str.str.contains('L')
-        # Extract numbers
-        nums = lat_str.str.extract(r'(\d+\.?\d*)')[0].astype(float).fillna(0.0)
-        # Apply sign
-        df_clean['Lateral_Clean'] = np.where(is_left, -nums, nums)
-    else:
-        df_clean['Lateral_Clean'] = 0.0
-
-    # Ensure numeric columns
-    numeric_cols = ['Carry (yds)', 'Total (yds)', 'Ball (mph)', 'Club (mph)', 'Smash', 'Spin (rpm)', 'Height (ft)', 'AOA (°)', 'Launch V (°)']
-    for col in numeric_cols:
-        if col in df_clean.columns:
-            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-    
-    # Altitude cleaning
-    if 'Altitude (ft)' not in df_clean.columns:
-        df_clean['Altitude (ft)'] = 0.0
-    else:
-        df_clean['Altitude (ft)'] = pd.to_numeric(
-            df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',',''), 
-            errors='coerce'
-        ).fillna(0.0)
-
-    # Base Sea Level Calculation
-    df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
-    df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
-    return df_clean
-
-@st.cache_data
-def filter_outliers(df):
-    """
-    Optimized outlier filtering using GroupBy + Transform (Vectorized).
-    Eliminates slow looping.
-    """
-    # 1. Physics Filter (Global)
-    # Smash > 1.58 is sensor error. Spin < 500 is misread.
-    mask_physics = (
-        (df['Smash'] <= 1.58) & 
-        (df['Smash'] >= 1.0) &
-        (df['Spin (rpm)'] > 500) & 
-        (df['Height (ft)'] > 8)
-    )
-    df_phys = df[mask_physics].copy()
-    dropped_physics = len(df) - len(df_phys)
-    
-    # 2. IQR Filter (Per Club, but vectorized)
-    if not df_phys.empty:
-        # Calculate Q1 and Q3 per club using transform (returns Series same length as df)
-        groups = df_phys.groupby('club')['SL_Carry']
-        Q1 = groups.transform(lambda x: x.quantile(0.25))
-        Q3 = groups.transform(lambda x: x.quantile(0.75))
-        IQR = Q3 - Q1
-        
-        # Apply filter
-        mask_iqr = (df_phys['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_phys['SL_Carry'] <= (Q3 + 3.0 * IQR))
-        df_final = df_phys[mask_iqr]
-        
-        dropped_stat = len(df_phys) - len(df_final)
-        return df_final, dropped_physics + dropped_stat
-    else:
-        return df_phys, dropped_physics
+def get_smart_max(series, df_subset):
+    """Calculates max value filtering out physics-defying outliers."""
+    valid = df_subset.loc[series.index]
+    clean = valid[
+        (valid['Smash'] <= 1.58) & 
+        (valid['Smash'] >= 1.0) &
+        (valid['Spin (rpm)'] > 500) & 
+        (valid['Height (ft)'] > 8)
+    ]
+    if clean.empty: 
+        return series.max()
+    col_to_use = 'Norm_Carry' if 'Norm_Carry' in clean.columns else 'SL_Carry'
+    return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
+    # SAFELY ACCESS SESSION STATE INSIDE FUNCTION
+    current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
+    
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
-    user_loft = my_bag.get(club_name, 30.0)
+    user_loft = current_bag.get(club_name, 30.0)
 
     if 'driver' in c_lower:
         aoa = (-2.0 - (tolerance*0.2), 5.0 + (tolerance*0.2)) 
@@ -296,6 +231,77 @@ def get_dynamic_ranges(club_name, handicap):
         s_base = user_loft * 210
         spin = (s_base - 1000 - (tolerance*100), s_base + 1000 + (tolerance*100))
     return aoa, launch, spin
+
+@st.cache_data
+def clean_mevo_data(df, filename, selected_date):
+    df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
+    df_clean['Session'] = filename.replace('.csv', '')
+    
+    if 'Date' in df_clean.columns:
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').fillna(pd.to_datetime(selected_date))
+    else:
+        df_clean['Date'] = pd.to_datetime(selected_date)
+    
+    # Vectorized Lateral Parsing
+    if 'Lateral (yds)' in df_clean.columns:
+        lat_str = df_clean['Lateral (yds)'].astype(str).str.upper()
+        is_left = lat_str.str.contains('L')
+        nums = lat_str.str.extract(r'(\d+\.?\d*)')[0].astype(float).fillna(0.0)
+        df_clean['Lateral_Clean'] = np.where(is_left, -nums, nums)
+    else:
+        df_clean['Lateral_Clean'] = 0.0
+
+    numeric_cols = ['Carry (yds)', 'Total (yds)', 'Ball (mph)', 'Club (mph)', 'Smash', 'Spin (rpm)', 'Height (ft)', 'AOA (°)', 'Launch V (°)']
+    for col in numeric_cols:
+        if col in df_clean.columns:
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+    
+    if 'Altitude (ft)' not in df_clean.columns:
+        df_clean['Altitude (ft)'] = 0.0
+    else:
+        df_clean['Altitude (ft)'] = pd.to_numeric(
+            df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',',''), 
+            errors='coerce'
+        ).fillna(0.0)
+
+    df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
+    df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
+    return df_clean
+
+@st.cache_data
+def filter_outliers(df):
+    df_filtered = pd.DataFrame()
+    outlier_count = 0
+    # Vectorized check: Physics Filter
+    mask_physics = (
+        (df['Smash'] <= 1.58) & 
+        (df['Smash'] >= 1.0) &
+        (df['Spin (rpm)'] > 500) & 
+        (df['Height (ft)'] > 8)
+    )
+    df_phys = df[mask_physics].copy()
+    dropped_physics = len(df) - len(df_phys)
+    
+    if not df_phys.empty:
+        # Vectorized check: IQR Filter
+        groups = df_phys.groupby('club')['SL_Carry']
+        Q1 = groups.transform(lambda x: x.quantile(0.25))
+        Q3 = groups.transform(lambda x: x.quantile(0.75))
+        IQR = Q3 - Q1
+        mask_iqr = (df_phys['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_phys['SL_Carry'] <= (Q3 + 3.0 * IQR))
+        df_final = df_phys[mask_iqr]
+        
+        dropped_stat = len(df_phys) - len(df_final)
+        return df_final, dropped_physics + dropped_stat
+    else:
+        return df_phys, dropped_physics
+
+def check_range(club_name, value, metric_idx, handicap):
+    ranges = get_dynamic_ranges(club_name, handicap) 
+    min_v, max_v = ranges[metric_idx]
+    if min_v <= value <= max_v: return "Optimal ✅", "normal"
+    elif value < min_v: return f"{value - min_v:.1f} (Low) ⚠️", "inverse"
+    else: return f"+{value - max_v:.1f} (High) ⚠️", "inverse"
 
 def get_coach_tip(metric_name, status, club):
     if "Optimal" in status: return None
@@ -432,7 +438,7 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        st.dataframe(bag_df, hide_index=True, height=200)
+        st.dataframe(bag_df, hide_index=True, width=None, height=200) # FIXED: Removed width='stretch'
             
     # --- ENVIRONMENT CONFIG ---
     st.markdown("---")
@@ -504,21 +510,12 @@ if not master_df.empty:
         total_sessions = filtered_df['Date'].nunique()
         
         driver_df = filtered_df[filtered_df['club'] == 'Driver']
-        longest_drive = 0
-        fastest_ball = 0
         if not driver_df.empty:
-            # Use smart max logic on Norm Carry
-            # We must pass the correct subset to smart max
-            # Smart max expects 'SL_Carry' but we want to use Norm for display. 
-            # Actually, smart max cleans physics first. 
-            # Let's perform a direct calculation on the filtered DF here for speed.
-            clean_driver = driver_df[
-                (driver_df['Smash'] <= 1.58) & (driver_df['Smash'] >= 1.0) &
-                (driver_df['Spin (rpm)'] > 500)
-            ]
-            if not clean_driver.empty:
-                longest_drive = clean_driver['Norm_Carry'].max()
-                fastest_ball = clean_driver['Ball (mph)'].max()
+            longest_drive = get_smart_max(driver_df['Norm_Carry'], driver_df)
+            fastest_ball = driver_df['Ball (mph)'].max()
+        else:
+            longest_drive = 0
+            fastest_ball = filtered_df['Ball (mph)'].max() if not filtered_df.empty else 0
             
         if not filtered_df.empty:
             fav_club = filtered_df['club'].mode()[0]
@@ -548,52 +545,37 @@ if not master_df.empty:
     # ================= TAB: MY BAG =================
     with tab_bag:
         st.subheader(f"🎒 My Bag & Yardages (Normalized to {sim_temp}°F)")
-        
-        # Optimized Aggregation
-        # 1. Averages
-        stats = filtered_df.groupby('club').agg({
-            'Norm_Carry': 'mean',
-            'Norm_Total': 'mean',
-            'Ball (mph)': 'mean',
-            'club': 'count'
-        }).rename(columns={'club': 'Count'})
-        
-        # 2. Ranges (Q20/Q80)
-        ranges = filtered_df.groupby('club')['Norm_Carry'].quantile([0.20, 0.80]).unstack()
-        
-        # 3. Smart Max (Vectorized)
-        # Apply physics filters once
-        valid_max_df = filtered_df[
-            (filtered_df['Smash'].between(1.0, 1.58)) & 
-            (filtered_df['Spin (rpm)'] > 500) & 
-            (filtered_df['Height (ft)'] > 8)
-        ]
-        if not valid_max_df.empty:
-            smart_maxes = valid_max_df.groupby('club')['Norm_Carry'].max()
-        else:
-            smart_maxes = pd.Series(dtype=float)
+        bag_data = []
+        for club in filtered_df['club'].unique():
+            subset = filtered_df[filtered_df['club'] == club]
+            s_max = get_smart_max(subset['Norm_Carry'], subset)
             
-        # Merge all
-        bag_view = stats.join(ranges).join(smart_maxes.rename("Max Carry"))
+            p20 = subset['Norm_Carry'].quantile(0.20)
+            p80 = subset['Norm_Carry'].quantile(0.80)
+            
+            bag_data.append({
+                'Club': club, 'Norm_Carry': subset['Norm_Carry'].mean(), 'Norm_Total': subset['Norm_Total'].mean(),
+                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset),
+                'Range_Min': p20, 'Range_Max': p80
+            })
         
-        # Sort
-        bag_view['SortIndex'] = bag_view.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
-        bag_view = bag_view.sort_values('SortIndex')
+        bag_stats = pd.DataFrame(bag_data).set_index('Club')
+        bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_stats = bag_stats.sort_values('SortIndex')
         
         st.write("---")
         cols = st.columns(4)
-        for i, (club_name, row) in enumerate(bag_view.iterrows()):
+        for i, (index, row) in enumerate(bag_stats.iterrows()):
             with cols[i % 4]:
-                s_max = row['Max Carry'] if not pd.isna(row['Max Carry']) else row['Norm_Carry']
                 st.markdown(f"""
                 <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
-                    <h3 style="margin:0; color: #4DD0E1;">{club_name}</h3>
+                    <h3 style="margin:0; color: #4DD0E1;">{index}</h3>
                     <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
-                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row[0.2]:.0f} - {row[0.8]:.0f}</div>
+                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row['Range_Min']:.0f} - {row['Range_Max']:.0f}</div>
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
-                        <span>Speed: {row['Ball (mph)']:.0f}</span>
-                        <span style="color: #FFD700;">Pot: {s_max:.0f}</span>
+                        <span>Speed: {row['Ball Speed']:.0f}</span>
+                        <span style="color: #FFD700;">Pot: {row['Max Carry']:.0f}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -729,6 +711,7 @@ if not master_df.empty:
             st.plotly_chart(fig_tgt, use_container_width=True)
             
             st.caption("Detailed Shot Scoring:")
+            # FIXED: Removed width parameter entirely for compatibility
             st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"))
         else:
             st.info("No shots found for this club in this session.")
@@ -776,17 +759,27 @@ if not master_df.empty:
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
             col_m1, col_m2, col_m3 = st.columns(3)
-            def display_mech_metric(col, label, key, idx):
-                if key in mech_data.columns:
-                    val = mech_data[key].mean()
-                    status, color = check_range(mech_club, val, idx, handicap)
-                    col.metric(label, f"{val:.1f}", status, delta_color=color)
-                    tip = get_coach_tip(label.split()[0], status, mech_club)
-                    if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
+            # LOGIC INLINE TO PREVENT SCOPE ERRORS
+            if 'AOA (°)' in mech_data.columns:
+                val = mech_data['AOA (°)'].mean()
+                status, color = check_range(mech_club, val, 0, handicap)
+                col_m1.metric("AoA (°)", f"{val:.1f}", status, delta_color=color)
+                tip = get_coach_tip("AoA", status, mech_club)
+                if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
 
-            with col_m1: display_mech_metric(col_m1, "AoA (°)", 'AOA (°)', 0)
-            with col_m2: display_mech_metric(col_m2, "Launch (°)", 'Launch V (°)', 1)
-            with col_m3: display_mech_metric(col_m3, "Spin (rpm)", 'Spin (rpm)', 2)
+            if 'Launch V (°)' in mech_data.columns:
+                val = mech_data['Launch V (°)'].mean()
+                status, color = check_range(mech_club, val, 1, handicap)
+                col_m2.metric("Launch (°)", f"{val:.1f}", status, delta_color=color)
+                tip = get_coach_tip("Launch", status, mech_club)
+                if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
+
+            if 'Spin (rpm)' in mech_data.columns:
+                val = mech_data['Spin (rpm)'].mean()
+                status, color = check_range(mech_club, val, 2, handicap)
+                col_m3.metric("Spin (rpm)", f"{val:.0f}", status, delta_color=color)
+                tip = get_coach_tip("Spin", status, mech_club)
+                if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
             
             if 'Smash' in mech_data.columns:
                 smash_val = mech_data['Smash'].mean()
