@@ -57,7 +57,7 @@ st.markdown("""
         border: 1px solid #4DD0E1 !important;
     }
 
-    /* 5. DASHBOARD HERO CARDS (New for Home Tab) */
+    /* 5. DASHBOARD HERO CARDS */
     .hero-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border-radius: 15px;
@@ -134,6 +134,38 @@ st.markdown("""
         text-align: center;
         margin-bottom: 10px;
     }
+    
+    /* Feature Cards */
+    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
+    
+    /* Summary Stats (Sidebar) */
+    .stat-card-container {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .stat-card {
+        background: linear-gradient(145deg, #1E222B, #262730);
+        border-radius: 12px;
+        padding: 15px;
+        flex: 1;
+        text-align: center;
+        border: 1px solid #333;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .stat-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #4DD0E1;
+        margin: 0;
+    }
+    .stat-label {
+        font-size: 14px;
+        color: #B0B3B8;
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,9 +193,7 @@ my_bag = st.session_state['profiles'][active_user]['bag']
 # --- 2. HELPERS ---
 def get_smart_max(series, df_subset):
     """Calculates max value filtering out physics-defying outliers."""
-    # Ensure indices match
     valid = df_subset.loc[series.index]
-    # Filter for realistic shots
     clean = valid[
         (valid['Smash'] <= 1.58) & 
         (valid['Smash'] >= 1.0) &
@@ -171,7 +201,8 @@ def get_smart_max(series, df_subset):
         (valid['Height (ft)'] > 8)
     ]
     if clean.empty: 
-        return series.max() # Fallback if everything is filtered
+        return series.max()
+    # Safely get max carry from clean data
     return clean.loc[clean['SL_Carry'].idxmax(), 'SL_Carry'] if 'SL_Carry' in clean.columns else series.max()
 
 def get_dynamic_ranges(club_name, handicap):
@@ -282,8 +313,8 @@ def get_coach_tip(metric_name, status, club):
         if "Low" in status: return "Launch is low. Check ball position (move forward) or if you are delofting the club."
         if "High" in status: return "Launch is high. You might be scooping. Try to keep hands ahead of the ball."
     if metric_name == "Spin":
-        if "Low" in status: return "Spin is dangerously low (ball will drop). Check for high strikes on the face."
-        if "High" in status: return "Spin is too high (ballooning). Check for low face strikes or excessive cut spin."
+        if "Low" in status: return "Spin is dangerously low. Strikes might be high on the face."
+        if "High" in status: return "Spin is too high. Strikes might be low on the face or you are cutting across it."
     return None
 
 def style_fig(fig):
@@ -406,7 +437,7 @@ with st.sidebar:
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
-    # SUMMARY STATS (SIDEBAR)
+    # SUMMARY STATS
     if not master_df.empty:
         st.markdown("---")
         tot_shots = len(master_df)
@@ -437,13 +468,11 @@ if not master_df.empty:
     # --- TABS ---
     tab_home, tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🏠 Home", "🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
-    # ================= TAB: HOME DASHBOARD (NEW) =================
+    # ================= TAB: HOME DASHBOARD =================
     with tab_home:
-        # Calculate Aggregates
         total_shots = len(filtered_df)
         total_sessions = filtered_df['Date'].nunique()
         
-        # Longest Drive (Smart Max)
         driver_df = filtered_df[filtered_df['club'] == 'Driver']
         if not driver_df.empty:
             longest_drive = get_smart_max(driver_df['SL_Carry'], driver_df)
@@ -452,7 +481,6 @@ if not master_df.empty:
             longest_drive = 0
             fastest_ball = filtered_df['Ball (mph)'].max() if not filtered_df.empty else 0
             
-        # Favorite Club
         if not filtered_df.empty:
             fav_club = filtered_df['club'].mode()[0]
             fav_club_count = len(filtered_df[filtered_df['club'] == fav_club])
@@ -460,17 +488,9 @@ if not master_df.empty:
             fav_club = "-"
             fav_club_count = 0
 
-        # HERO CARDS LAYOUT
         c_h1, c_h2, c_h3, c_h4 = st.columns(4)
-        
         def render_hero(col, title, value, sub):
-            col.markdown(f"""
-            <div class="hero-card">
-                <div class="hero-title">{title}</div>
-                <div class="hero-metric">{value}</div>
-                <div class="hero-sub">{sub}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            col.markdown(f"""<div class="hero-card"><div class="hero-title">{title}</div><div class="hero-metric">{value}</div><div class="hero-sub">{sub}</div></div>""", unsafe_allow_html=True)
 
         render_hero(c_h1, "Longest Drive", f"{longest_drive:.0f}<span style='font-size:20px'>y</span>", "Smart Max Potential")
         render_hero(c_h2, "Ball Speed Record", f"{fastest_ball:.0f}<span style='font-size:20px'>mph</span>", "All-Time Max")
@@ -478,8 +498,6 @@ if not master_df.empty:
         render_hero(c_h4, "Favorite Club", f"{fav_club}", f"{fav_club_count} Shots Recorded")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        
-        # RECENT ACTIVITY CHART
         st.subheader("📊 Recent Activity")
         if not filtered_df.empty:
             activity = filtered_df.groupby('Date').size().reset_index(name='Shots')
@@ -502,12 +520,8 @@ if not master_df.empty:
             subset = filtered_df[filtered_df['club'] == club]
             s_max = get_smart_max(subset['SL_Carry'], subset)
             bag_data.append({
-                'Club': club,
-                'SL_Carry': subset['SL_Carry'].mean(),
-                'SL_Total': subset['SL_Total'].mean(),
-                'Ball Speed': subset['Ball (mph)'].mean(),
-                'Max Carry': s_max,
-                'Count': len(subset)
+                'Club': club, 'SL_Carry': subset['SL_Carry'].mean(), 'SL_Total': subset['SL_Total'].mean(),
+                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset)
             })
         
         bag_stats = pd.DataFrame(bag_data).set_index('Club')
@@ -544,7 +558,6 @@ if not master_df.empty:
             if len(subset) > 0:
                 is_scoring = any(x in str(selected_club).lower() for x in ['8','9','p','w','s','l','g'])
                 target_val = 5.0 + (handicap * 0.4) if is_scoring else 15.0 + (handicap * 0.8)
-                
                 lat_mean = subset['Lateral_Clean'].mean()
                 tendency_dir = "Right ➡️" if lat_mean > 0 else "Left ⬅️"
                 
@@ -620,7 +633,7 @@ if not master_df.empty:
                 st.plotly_chart(style_fig(fig_app), use_container_width=True)
             else: st.warning("No Iron/Wedge data found.")
 
-    # ================= TAB: TIMELINE =================
+    # ================= TAB: TIMELINE (NEW: CONSISTENCY BANDS) =================
     with tab_time:
         if len(filtered_df) > 0:
             st.subheader("📈 Timeline")
@@ -630,11 +643,27 @@ if not master_df.empty:
             with c_t2: metric = st.selectbox("Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash'])
             
             if 'Date' in filtered_df.columns:
-                trend = filtered_df[filtered_df['club'] == t_club].groupby('Date')[metric].mean().reset_index().sort_values('Date')
-                fig = px.line(trend, x='Date', y=metric, markers=True, title=f"{t_club} Progress")
-                fig.update_traces(line_color='#00E676', line_width=4)
-                st.plotly_chart(style_fig(fig), use_container_width=True)
-            else: st.warning("No Date info.")
+                club_data = filtered_df[filtered_df['club'] == t_club]
+                trend = club_data.groupby('Date')[metric].agg(['mean', 'std']).reset_index().sort_values('Date')
+                trend['std'] = trend['std'].fillna(0)
+                trend['upper'] = trend['mean'] + trend['std']
+                trend['lower'] = trend['mean'] - trend['std']
+                
+                if len(trend) > 1:
+                    fig = go.Figure()
+                    # Confidence Band
+                    fig.add_trace(go.Scatter(x=trend['Date'], y=trend['upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+                    fig.add_trace(go.Scatter(x=trend['Date'], y=trend['lower'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 230, 118, 0.2)', showlegend=False, hoverinfo='skip'))
+                    # Main Line
+                    fig.add_trace(go.Scatter(x=trend['Date'], y=trend['mean'], mode='lines+markers', name='Average', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676')))
+                    
+                    fig.update_layout(title=f"{t_club} Progress: Average ± Consistency", yaxis_title=metric, hovermode="x unified", template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption("ℹ️ The shaded green area represents your consistency (Standard Deviation). A narrower band means more consistent performance.")
+                else: 
+                    st.info(f"Not enough sessions to show a trend for {t_club} yet.")
+            else: 
+                st.warning("No Date info.")
 
     # ================= TAB: MECHANICS =================
     with tab_mech:
