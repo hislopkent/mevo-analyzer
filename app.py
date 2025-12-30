@@ -265,10 +265,8 @@ def get_coach_tip(metric_name, status, club):
         if "Low" in status: return "Launch is low. Check ball position (move forward) or if you are delofting the club."
         if "High" in status: return "Launch is high. You might be scooping. Try to keep hands ahead of the ball."
     if metric_name == "Spin":
-        if "Low" in status: return "Spin is dangerously low. Strikes might be high on the face."
-        if "High" in status: return "Spin is too high. Strikes might be low on the face or you are cutting across it."
-    if metric_name == "Smash":
-        if "Low" in status: return "Low efficiency. Check for heel/toe strikes using foot spray on the face."
+        if "Low" in status: return "Spin is dangerously low (ball will drop). Check for high strikes on the face."
+        if "High" in status: return "Spin is too high (ballooning). Check for low face strikes or excessive cut spin."
     return None
 
 def style_fig(fig):
@@ -300,7 +298,7 @@ with st.sidebar:
         st.rerun()
         
     new_prof_name = st.text_input("New Profile Name")
-    if st.button("➕ Create Profile"):
+    if st.button("➕ Create Profile", use_container_width=True):
         if new_prof_name and new_prof_name not in st.session_state['profiles']:
             st.session_state['profiles'][new_prof_name] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
             st.success(f"Created {new_prof_name}")
@@ -311,7 +309,7 @@ with st.sidebar:
     with st.expander(f"📂 Manage Data: {active_user}", expanded=False):
         db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
         if db_file:
-            if st.button("🔄 Restore Database"):
+            if st.button("🔄 Restore Database", use_container_width=True):
                 try:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
@@ -327,8 +325,8 @@ with st.sidebar:
         
         if not master_df.empty:
             csv_data = master_df.to_csv(index=False).encode('utf-8')
-            st.download_button("💾 Save Database", csv_data, f"{active_user}_mevo_db.csv", "text/csv")
-            if st.button("🗑️ Clear All"):
+            st.download_button("💾 Save Database", csv_data, f"{active_user}_mevo_db.csv", "text/csv", use_container_width=True)
+            if st.button("🗑️ Clear All", use_container_width=True):
                 st.session_state['profiles'][active_user]['df'] = pd.DataFrame()
                 st.rerun()
 
@@ -336,7 +334,7 @@ with st.sidebar:
     import_date = st.date_input("Date of Session")
     uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
-    if st.button("➕ Add to Database"):
+    if st.button("➕ Add to Database", use_container_width=True):
         if uploaded_files:
             new_data = []
             for f in uploaded_files:
@@ -383,7 +381,9 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        st.dataframe(bag_df, hide_index=True, use_container_width=True, height=200)
+        
+        # UPDATED: Replaced deprecated `use_container_width` with `width="stretch"`
+        st.dataframe(bag_df, hide_index=True, width="stretch", height=200)
             
     # --- PLAYER CONFIG ---
     st.markdown("---")
