@@ -188,8 +188,7 @@ active_user = st.session_state['active_user']
 master_df = st.session_state['profiles'][active_user]['df']
 my_bag = st.session_state['profiles'][active_user]['bag']
 
-# --- 2. HELPERS (Global Scope Safe) ---
-
+# --- 2. HELPERS ---
 def get_smart_max(series, df_subset):
     """Calculates max value filtering out physics-defying outliers."""
     valid = df_subset.loc[series.index]
@@ -205,9 +204,7 @@ def get_smart_max(series, df_subset):
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
-    # SAFELY ACCESS SESSION STATE INSIDE FUNCTION
     current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
-    
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
@@ -242,7 +239,6 @@ def clean_mevo_data(df, filename, selected_date):
     else:
         df_clean['Date'] = pd.to_datetime(selected_date)
     
-    # Vectorized Lateral Parsing
     if 'Lateral (yds)' in df_clean.columns:
         lat_str = df_clean['Lateral (yds)'].astype(str).str.upper()
         is_left = lat_str.str.contains('L')
@@ -272,7 +268,6 @@ def clean_mevo_data(df, filename, selected_date):
 def filter_outliers(df):
     df_filtered = pd.DataFrame()
     outlier_count = 0
-    # Vectorized check: Physics Filter
     mask_physics = (
         (df['Smash'] <= 1.58) & 
         (df['Smash'] >= 1.0) &
@@ -283,7 +278,6 @@ def filter_outliers(df):
     dropped_physics = len(df) - len(df_phys)
     
     if not df_phys.empty:
-        # Vectorized check: IQR Filter
         groups = df_phys.groupby('club')['SL_Carry']
         Q1 = groups.transform(lambda x: x.quantile(0.25))
         Q3 = groups.transform(lambda x: x.quantile(0.75))
@@ -438,7 +432,7 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        st.dataframe(bag_df, hide_index=True, width=None, height=200) # FIXED: Removed width='stretch'
+        st.dataframe(bag_df, hide_index=True, height=200) # FIXED: Removed width completely
             
     # --- ENVIRONMENT CONFIG ---
     st.markdown("---")
@@ -711,7 +705,6 @@ if not master_df.empty:
             st.plotly_chart(fig_tgt, use_container_width=True)
             
             st.caption("Detailed Shot Scoring:")
-            # FIXED: Removed width parameter entirely for compatibility
             st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"))
         else:
             st.info("No shots found for this club in this session.")
