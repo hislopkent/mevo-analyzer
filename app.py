@@ -30,7 +30,7 @@ st.markdown("""
     }
 
     /* 3. FIX PLAYER CONFIG INPUTS */
-    section[data-testid="stSidebar"] input {
+    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] select {
         background-color: #262730 !important;
         color: #FAFAFA !important;
         border: 1px solid #444 !important;
@@ -113,7 +113,7 @@ st.markdown("""
     div[data-testid="stExpander"] summary p { color: #FAFAFA !important; font-weight: 600; }
     div[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p { color: #E0E0E0 !important; }
 
-    /* Custom Coach Box */
+    /* Custom Coach Box & SG Box */
     .coach-box {
         background-color: #262730;
         border-left: 4px solid #FF4081;
@@ -121,25 +121,48 @@ st.markdown("""
         border-radius: 5px;
         margin-top: 15px;
     }
+    .sg-box {
+        background-color: #262730;
+        border: 1px solid #444;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    
+    /* Feature Cards */
+    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. INITIALIZE SESSION STATE ---
-if 'master_df' not in st.session_state:
-    st.session_state['master_df'] = pd.DataFrame()
+# --- 1. INITIALIZE MULTI-USER SESSION STATE ---
 
 DEFAULT_LOFTS = {'Driver': 10.5, '3 Wood': 15.0, '5 Wood': 18.0, 'Hybrid': 21.0, '3 Iron': 21.0, '4 Iron': 24.0, '5 Iron': 27.0, '6 Iron': 30.0, '7 Iron': 34.0, '8 Iron': 38.0, '9 Iron': 42.0, 'PW': 46.0, 'GW': 50.0, 'SW': 54.0, 'LW': 58.0}
 CLUB_SORT_ORDER = ['Driver', '3 Wood', '5 Wood', '7 Wood', 'Hybrid', '2 Iron', '3 Iron', '4 Iron', '5 Iron', '6 Iron', '7 Iron', '8 Iron', '9 Iron', 'PW', 'GW', 'SW', 'LW']
 
-if 'my_bag' not in st.session_state:
-    st.session_state['my_bag'] = DEFAULT_LOFTS.copy()
+# Structure: profiles = { 'Name': {'df': dataframe, 'bag': dict} }
+if 'profiles' not in st.session_state:
+    st.session_state['profiles'] = {
+        'Default Golfer': {
+            'df': pd.DataFrame(), 
+            'bag': DEFAULT_LOFTS.copy()
+        }
+    }
+
+if 'active_user' not in st.session_state:
+    st.session_state['active_user'] = 'Default Golfer'
+
+# Shortcut references to ACTIVE data
+active_user = st.session_state['active_user']
+master_df = st.session_state['profiles'][active_user]['df']
+my_bag = st.session_state['profiles'][active_user]['bag']
 
 # --- 2. HELPERS ---
 def get_dynamic_ranges(club_name, handicap):
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
     launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
-    user_loft = st.session_state['my_bag'].get(club_name, 30.0)
+    user_loft = my_bag.get(club_name, 30.0)
 
     if 'driver' in c_lower:
         aoa = (-2.0 - (tolerance*0.2), 5.0 + (tolerance*0.2)) 
@@ -163,7 +186,11 @@ def get_dynamic_ranges(club_name, handicap):
 def clean_mevo_data(df, filename, selected_date):
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
     df_clean['Session'] = filename.replace('.csv', '')
-    df_clean['Date'] = pd.to_datetime(selected_date)
+    
+    if 'Date' in df_clean.columns:
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').fillna(pd.to_datetime(selected_date))
+    else:
+        df_clean['Date'] = pd.to_datetime(selected_date)
     
     def parse_lr(val):
         if pd.isna(val): return 0.0
@@ -189,7 +216,6 @@ def clean_mevo_data(df, filename, selected_date):
         df_clean['Altitude (ft)'] = df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',','')
         df_clean['Altitude (ft)'] = pd.to_numeric(df_clean['Altitude (ft)'], errors='coerce').fillna(0.0)
 
-    # Normalize
     df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     return df_clean
@@ -197,40 +223,28 @@ def clean_mevo_data(df, filename, selected_date):
 def filter_outliers(df):
     df_filtered = pd.DataFrame()
     outlier_count = 0
-    
     for club in df['club'].unique():
         club_data = df[df['club'] == club].copy()
         
-        # --- STAGE 1: PHYSICS SANITY CHECK ---
+        # STAGE 1: Physics Check
         valid_physics = club_data[
-            (club_data['Smash'] <= 1.58) & 
-            (club_data['Smash'] >= 1.0) &
-            (club_data['Spin (rpm)'] > 500) & 
-            (club_data['Height (ft)'] > 8)
+            (club_data['Smash'] <= 1.58) & (club_data['Smash'] >= 1.0) &
+            (club_data['Spin (rpm)'] > 500) & (club_data['Height (ft)'] > 8)
         ]
-        
         dropped_physics = len(club_data) - len(valid_physics)
-        
         if len(valid_physics) < 5:
             df_filtered = pd.concat([df_filtered, valid_physics])
             outlier_count += dropped_physics
             continue
 
-        # --- STAGE 2: STATISTICAL IQR CHECK (Distance) ---
+        # STAGE 2: IQR Check
         q1 = valid_physics['Carry (yds)'].quantile(0.25)
         q3 = valid_physics['Carry (yds)'].quantile(0.75)
         iqr = q3 - q1
         lower = q1 - (1.5 * iqr) 
-        upper = q3 + (3.0 * iqr) # Allow more upside variance for good shots
-        
-        final_valid = valid_physics[
-            (valid_physics['Carry (yds)'] >= lower) & 
-            (valid_physics['Carry (yds)'] <= upper)
-        ]
-        
-        dropped_stat = len(valid_physics) - len(final_valid)
-        outlier_count += (dropped_physics + dropped_stat)
-        
+        upper = q3 + (3.0 * iqr)
+        final_valid = valid_physics[(valid_physics['Carry (yds)'] >= lower) & (valid_physics['Carry (yds)'] <= upper)]
+        outlier_count += (dropped_physics + (len(valid_physics) - len(final_valid)))
         df_filtered = pd.concat([df_filtered, final_valid])
         
     return df_filtered, outlier_count
@@ -260,33 +274,76 @@ def style_fig(fig):
     fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
+# --- STROKES GAINED CALCULATION LOGIC ---
+def calculate_sg_off_tee(row):
+    # Simplified Broadie-style logic for a 400y Par 4
+    # Baseline Strokes to hole from Tee: 4.10
+    dist_remaining = 400 - row['Total (yds)']
+    if dist_remaining < 0: dist_remaining = 10
+    
+    # Penalty for accuracy
+    abs_lat = abs(row['Lateral_Clean'])
+    if abs_lat < 15: lie_penalty = 0 # Fairway
+    elif abs_lat < 30: lie_penalty = 0.3 # Rough
+    else: lie_penalty = 1.1 # Recovery/Penalty
+    
+    # Expected strokes from remaining distance (Simple linear approx for amateur)
+    # E.g. from 150y = 3.2 strokes to hole
+    strokes_from_dist = (dist_remaining / 100) + 2.0 
+    
+    # SG = Baseline - (Shot 1 + Remaining)
+    sg = 4.10 - (1 + strokes_from_dist + lie_penalty)
+    return sg
+
 # --- 3. SIDEBAR ---
 with st.sidebar:
-    st.header("1. Database Manager")
-    with st.expander("📂 Load / Save History", expanded=False):
+    st.header("1. User Profile")
+    
+    # PROFILE SWITCHER
+    profiles = list(st.session_state['profiles'].keys())
+    selected_profile = st.selectbox("Active Golfer:", profiles, index=profiles.index(st.session_state['active_user']))
+    
+    # Logic to switch profile
+    if selected_profile != st.session_state['active_user']:
+        st.session_state['active_user'] = selected_profile
+        st.rerun()
+        
+    # Add New Profile
+    new_prof_name = st.text_input("New Profile Name")
+    if st.button("➕ Create Profile"):
+        if new_prof_name and new_prof_name not in st.session_state['profiles']:
+            st.session_state['profiles'][new_prof_name] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
+            st.success(f"Created {new_prof_name}")
+            st.rerun()
+
+    st.markdown("---")
+    st.header("2. Database Manager")
+    with st.expander(f"📂 Manage Data: {active_user}", expanded=False):
         db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
         if db_file:
             if st.button("🔄 Restore Database"):
                 try:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
+                    
+                    # Update ACTIVE PROFILE
+                    st.session_state['profiles'][active_user]['df'] = restored
                     if 'Ref Loft' in restored.columns:
                         latest_lofts = restored.drop_duplicates('club', keep='last').set_index('club')['Ref Loft'].to_dict()
-                        st.session_state['my_bag'].update(latest_lofts)
-                        st.toast("Bag Lofts Restored!", icon="🎒")
-                    st.session_state['master_df'] = restored
-                    st.success(f"Restored {len(restored)} shots!")
+                        st.session_state['profiles'][active_user]['bag'].update(latest_lofts)
+                    
+                    st.success(f"Restored data for {active_user}!")
                     st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
         
-        if not st.session_state['master_df'].empty:
-            csv_data = st.session_state['master_df'].to_csv(index=False).encode('utf-8')
-            st.download_button("💾 Save Database", csv_data, "mevo_db.csv", "text/csv")
+        if not master_df.empty:
+            csv_data = master_df.to_csv(index=False).encode('utf-8')
+            st.download_button("💾 Save Database", csv_data, f"{active_user}_mevo_db.csv", "text/csv")
             if st.button("🗑️ Clear All"):
-                st.session_state['master_df'] = pd.DataFrame()
+                st.session_state['profiles'][active_user]['df'] = pd.DataFrame()
                 st.rerun()
 
-    st.header("2. Add Session")
+    st.header("3. Add Session")
     import_date = st.date_input("Date of Session")
     uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
@@ -297,49 +354,56 @@ with st.sidebar:
                 try:
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
-                    clean['Ref Loft'] = clean['club'].map(st.session_state['my_bag'])
+                    clean['Ref Loft'] = clean['club'].map(my_bag)
                     new_data.append(clean)
                 except Exception as e: st.error(f"Error {f.name}: {e}")
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
                 batch_df['Ref Loft'] = batch_df['Ref Loft'].fillna(30.0)
-                st.session_state['master_df'] = pd.concat([st.session_state['master_df'], batch_df], ignore_index=True)
-                st.success(f"Added {len(batch_df)} shots!")
+                # Update ACTIVE PROFILE
+                st.session_state['profiles'][active_user]['df'] = pd.concat([master_df, batch_df], ignore_index=True)
+                st.success(f"Added {len(batch_df)} shots to {active_user}!")
                 st.rerun()
 
     st.markdown("---")
     
     # --- MY BAG CONFIG ---
-    st.header("3. My Bag Setup")
-    with st.expander("⚙️ Configure Club Lofts"):
+    st.header("4. My Bag Setup")
+    with st.expander(f"⚙️ Lofts: {active_user}"):
         selected_club = st.selectbox("Choose Club:", CLUB_SORT_ORDER, index=0)
-        current_loft = st.session_state['my_bag'].get(selected_club, DEFAULT_LOFTS.get(selected_club, 30.0))
+        current_loft = my_bag.get(selected_club, DEFAULT_LOFTS.get(selected_club, 30.0))
         new_loft = st.number_input(f"Loft for {selected_club} (°)", value=float(current_loft), step=0.5, format="%.1f")
         
-        if st.button("💾 Save Loft Change", type="primary", use_container_width=True):
-            st.session_state['my_bag'][selected_club] = new_loft
-            st.toast(f"Saved: {selected_club} @ {new_loft}°", icon="✅")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("💾 Save", type="primary", use_container_width=True):
+                st.session_state['profiles'][active_user]['bag'][selected_club] = new_loft
+                st.toast(f"Saved for {active_user}", icon="✅")
+        with c2:
+            if st.button("🔄 Reset", type="secondary", use_container_width=True):
+                st.session_state['profiles'][active_user]['bag'] = DEFAULT_LOFTS.copy()
+                st.rerun()
             
         st.markdown("---")
         st.caption("Current Configuration:")
-        bag_df = pd.DataFrame(list(st.session_state['my_bag'].items()), columns=['Club', 'Loft'])
+        bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
         st.dataframe(bag_df, hide_index=True, use_container_width=True, height=200)
             
     # --- PLAYER CONFIG ---
     st.markdown("---")
-    st.header("4. Player Config")
+    st.header("5. Player Config")
     env_mode = st.radio("Filter:", ["All", "Outdoor Only", "Indoor Only"], index=0)
     handicap = st.number_input("Handicap", 0, 54, 15)
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
     # SUMMARY STATS
-    if not st.session_state['master_df'].empty:
+    if not master_df.empty:
         st.markdown("---")
-        tot_shots = len(st.session_state['master_df'])
-        tot_sess = st.session_state['master_df']['Date'].nunique()
+        tot_shots = len(master_df)
+        tot_sess = master_df['Date'].nunique()
         st.markdown(f"""
         <div class="stat-card-container">
             <div class="stat-card"><p class="stat-value">{tot_shots}</p><p class="stat-label">Shots</p></div>
@@ -348,10 +412,8 @@ with st.sidebar:
         """, unsafe_allow_html=True)
 
 # --- 4. MAIN APP LOGIC ---
-master_df = st.session_state['master_df']
-
 if not master_df.empty:
-    st.title("⛳ Homegrown FS Pro Analytics")
+    st.title(f"⛳ Analytics: {active_user}")
     
     filtered_df = master_df.copy()
     if env_mode == "Outdoor Only" and 'Mode' in filtered_df.columns:
@@ -365,10 +427,10 @@ if not master_df.empty:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    st.caption(f"Analyzing {len(filtered_df)} shots")
+    st.caption(f"Analyzing {len(filtered_df)} shots for {active_user}")
 
     # --- TABS ---
-    tab_bag, tab_acc, tab_gap, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
+    tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
     # ================= TAB: MY BAG =================
     with tab_bag:
@@ -379,19 +441,12 @@ if not master_df.empty:
             alt_factor = 1 + (play_alt / 1000.0 * 0.011)
             if play_alt > 0: st.caption(f"Boost: +{((alt_factor-1)*100):.1f}%")
 
-        # Smart Max Calculation (Matches Filter Logic)
         def get_smart_max(series, df_subset):
-            # We must use the indices from the series to filter the subset correctly
             valid = df_subset.loc[series.index]
-            # Apply same physics checks as filter_outliers
-            clean = valid[
-                (valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) &
-                (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)
-            ]
+            clean = valid[(valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) & (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)]
             if clean.empty: return series.max()
             return clean['SL_Carry'].max()
 
-        # Aggregation
         bag_data = []
         for club in filtered_df['club'].unique():
             subset = filtered_df[filtered_df['club'] == club]
@@ -408,7 +463,6 @@ if not master_df.empty:
         bag_stats = pd.DataFrame(bag_data).set_index('Club')
         bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_stats = bag_stats.sort_values('SortIndex')
-        
         bag_stats['Adj. Carry'] = bag_stats['SL_Carry'] * alt_factor
         bag_stats['Adj. Total'] = bag_stats['SL_Total'] * alt_factor
         bag_stats['Adj. Max'] = bag_stats['Max Carry'] * alt_factor
@@ -438,29 +492,14 @@ if not master_df.empty:
             subset = filtered_df[filtered_df['club'] == selected_club]
             
             if len(subset) > 0:
-                # 3-TIER TARGET LOGIC
-                c_name = str(selected_club).lower()
-                
-                # 1. TEE SHOTS (Driver, Woods, Hybrids)
-                if 'driver' in c_name or 'wood' in c_name or 'hybrid' in c_name:
-                    target_val = 15.0 + (handicap * 0.5) # Wide Fairway
-                    target_type = "Fairway Lane"
-                # 2. APPROACH (Irons 2-7)
-                elif any(x in c_name for x in ['2','3','4','5','6','7']):
-                    target_val = 10.0 + (handicap * 0.4) # Green Width
-                    target_type = "Approach Lane"
-                # 3. SCORING (8,9, Wedges)
-                else:
-                    target_val = 5.0 + (handicap * 0.25) # Pin Seeking
-                    target_type = "Pin Radius"
-                
-                # New Tendency Metric
+                is_scoring = any(x in str(selected_club).lower() for x in ['8','9','p','w','s','l','g'])
+                target_val = 5.0 + (handicap * 0.4) if is_scoring else 15.0 + (handicap * 0.8)
                 lat_mean = subset['Lateral_Clean'].mean()
                 tendency_dir = "Right ➡️" if lat_mean > 0 else "Left ⬅️"
                 
                 c1, c2, c3, c4 = st.columns(4)
                 on_target = len(subset[abs(subset['Lateral_Clean']) <= target_val]) / len(subset) * 100
-                c1.metric("Accuracy Score", f"{on_target:.0f}%", f"{target_type}: ±{target_val:.1f}y")
+                c1.metric("Accuracy Score", f"{on_target:.0f}%", f"Target: ±{target_val:.1f}y")
                 c2.metric("Tendency", f"{abs(lat_mean):.1f}y", tendency_dir)
                 c3.metric("Avg Carry", f"{subset['Carry (yds)'].mean():.1f}")
                 c4.metric("Ball Speed", f"{subset['Ball (mph)'].mean():.1f}")
@@ -470,7 +509,7 @@ if not master_df.empty:
                     subset['Shape'] = np.where(subset['Lateral_Clean'] > 0, 'Fade (R)', 'Draw (L)')
                     fig = px.scatter(subset, x='Lateral_Clean', y='Carry (yds)', color='Shape',
                         color_discrete_map={'Fade (R)': '#00E5FF', 'Draw (L)': '#FF4081'},
-                        hover_data=['Date'], title=f"Dispersion: {selected_club}")
+                        hover_data=['Date', 'Smash', 'Spin (rpm)'], title=f"Dispersion: {selected_club}")
                     fig.add_shape(type="rect", x0=-target_val, y0=subset['Carry (yds)'].min()-10, x1=target_val, y1=subset['Carry (yds)'].max()+10,
                         line_color="#00E676", fillcolor="#00E676", opacity=0.1)
                     fig.add_vline(x=0, line_color="white", opacity=0.2)
@@ -496,6 +535,63 @@ if not master_df.empty:
             fig = px.box(filtered_df.sort_values('SortIndex'), x='club', y='Carry (yds)', color='club', points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
 
+    # ================= TAB: STROKES GAINED (NEW) =================
+    with tab_sg:
+        st.subheader("🏆 Strokes Gained Calculator (Estimator)")
+        
+        sg_mode = st.radio("Mode:", ["Off The Tee (Driver)", "Approach (Irons)"], horizontal=True)
+        
+        if sg_mode == "Off The Tee (Driver)":
+            driver_data = filtered_df[filtered_df['club'] == 'Driver'].copy()
+            if len(driver_data) > 0:
+                driver_data['SG_OTT'] = driver_data.apply(calculate_sg_off_tee, axis=1)
+                avg_sg = driver_data['SG_OTT'].mean()
+                
+                c_sg1, c_sg2 = st.columns(2)
+                c_sg1.markdown(f"""
+                <div class="sg-box">
+                    <h3 style="color:#4DD0E1">SG: Off The Tee</h3>
+                    <h1 style="color:#FFF">{avg_sg:+.2f}</h1>
+                    <p style="color:#BBB">per shot vs 15 HCP Baseline</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                fig_sg = px.histogram(driver_data, x="SG_OTT", nbins=20, title="Distribution of Driver Performance")
+                fig_sg.add_vline(x=0, line_color="white", annotation_text="Baseline")
+                st.plotly_chart(style_fig(fig_sg), use_container_width=True)
+            else:
+                st.info("No Driver data found for this profile.")
+        else:
+            # Approach Logic (Proximity)
+            st.info("ℹ️ SG: Approach compares your consistency to a Scratch Golfer's dispersion.")
+            iron_clubs = [c for c in filtered_df['club'].unique() if "Iron" in c or "Wedge" in c]
+            if iron_clubs:
+                sel_iron = st.selectbox("Select Iron:", iron_clubs)
+                iron_data = filtered_df[filtered_df['club'] == sel_iron]
+                
+                # Scratch Benchmark: 5% distance control, 4 degrees lateral
+                # Simple score: % of shots inside that circle
+                avg_dist = iron_data['Carry (yds)'].mean()
+                dist_tol = avg_dist * 0.05
+                lat_tol = avg_dist * np.tan(np.radians(4))
+                
+                good_shots = iron_data[
+                    (abs(iron_data['Carry (yds)'] - avg_dist) < dist_tol) &
+                    (abs(iron_data['Lateral_Clean']) < lat_tol)
+                ]
+                score = len(good_shots) / len(iron_data) * 100
+                
+                c_app1, c_app2 = st.columns(2)
+                c_app1.metric("Scratch Consistency", f"{score:.0f}%", "Shots inside Scratch dispersion")
+                
+                fig_app = px.scatter(iron_data, x="Lateral_Clean", y="Carry (yds)", title=f"{sel_iron} vs Scratch Zone")
+                fig_app.add_shape(type="circle",
+                    x0=-lat_tol, y0=avg_dist-dist_tol, x1=lat_tol, y1=avg_dist+dist_tol,
+                    line_color="#00E676", fillcolor="#00E676", opacity=0.2)
+                st.plotly_chart(style_fig(fig_app), use_container_width=True)
+            else:
+                st.warning("No Iron/Wedge data found.")
+
     # ================= TAB: TIMELINE =================
     with tab_time:
         if len(filtered_df) > 0:
@@ -520,14 +616,12 @@ if not master_df.empty:
             avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
             with c_sel1: mech_club = st.selectbox("Analyze Club", avail_clubs, key='m_club')
             with c_sel2: 
-                curr_loft = st.session_state['my_bag'].get(mech_club, 30.0)
+                curr_loft = my_bag.get(mech_club, 30.0)
                 st.metric("Bag Loft", f"{curr_loft}°")
 
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
             col_m1, col_m2, col_m3 = st.columns(3)
-            
-            # Helper to display metrics + coach tip
             def display_mech_metric(col, label, key, idx):
                 if key in mech_data.columns:
                     val = mech_data[key].mean()
@@ -601,7 +695,7 @@ if not master_df.empty:
     with tab_faq:
         st.subheader("❓ FAQ & Help")
         with st.expander("🧹 What is 'Auto-Clean Outliers'?", expanded=False):
-            st.markdown("We use the **IQR method** to strip out misreads and duffs.")
+            st.markdown("We use the **IQR method** combined with physics checks (Smash/Spin) to strip out misreads and duffs.")
         with st.expander("🌊 How does 'Sea Level' Normalization work?", expanded=False):
             st.markdown("We apply a **1.1% per 1,000 ft** correction to simulate Sea Level performance.")
         with st.expander("⚙️ Why do I need to set 'My Bag' lofts?", expanded=False):
