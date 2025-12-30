@@ -30,7 +30,7 @@ st.markdown("""
     }
 
     /* 3. FIX PLAYER CONFIG INPUTS */
-    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] select {
+    section[data-testid="stSidebar"] input {
         background-color: #262730 !important;
         color: #FAFAFA !important;
         border: 1px solid #444 !important;
@@ -140,7 +140,6 @@ st.markdown("""
 DEFAULT_LOFTS = {'Driver': 10.5, '3 Wood': 15.0, '5 Wood': 18.0, 'Hybrid': 21.0, '3 Iron': 21.0, '4 Iron': 24.0, '5 Iron': 27.0, '6 Iron': 30.0, '7 Iron': 34.0, '8 Iron': 38.0, '9 Iron': 42.0, 'PW': 46.0, 'GW': 50.0, 'SW': 54.0, 'LW': 58.0}
 CLUB_SORT_ORDER = ['Driver', '3 Wood', '5 Wood', '7 Wood', 'Hybrid', '2 Iron', '3 Iron', '4 Iron', '5 Iron', '6 Iron', '7 Iron', '8 Iron', '9 Iron', 'PW', 'GW', 'SW', 'LW']
 
-# Structure: profiles = { 'Name': {'df': dataframe, 'bag': dict} }
 if 'profiles' not in st.session_state:
     st.session_state['profiles'] = {
         'Default Golfer': {
@@ -266,8 +265,10 @@ def get_coach_tip(metric_name, status, club):
         if "Low" in status: return "Launch is low. Check ball position (move forward) or if you are delofting the club."
         if "High" in status: return "Launch is high. You might be scooping. Try to keep hands ahead of the ball."
     if metric_name == "Spin":
-        if "Low" in status: return "Spin is dangerously low (ball will drop). Check for high strikes on the face."
-        if "High" in status: return "Spin is too high (ballooning). Check for low face strikes or excessive cut spin."
+        if "Low" in status: return "Spin is dangerously low. Strikes might be high on the face."
+        if "High" in status: return "Spin is too high. Strikes might be low on the face or you are cutting across it."
+    if metric_name == "Smash":
+        if "Low" in status: return "Low efficiency. Check for heel/toe strikes using foot spray on the face."
     return None
 
 def style_fig(fig):
@@ -276,22 +277,13 @@ def style_fig(fig):
 
 # --- STROKES GAINED CALCULATION LOGIC ---
 def calculate_sg_off_tee(row):
-    # Simplified Broadie-style logic for a 400y Par 4
-    # Baseline Strokes to hole from Tee: 4.10
     dist_remaining = 400 - row['Total (yds)']
     if dist_remaining < 0: dist_remaining = 10
-    
-    # Penalty for accuracy
     abs_lat = abs(row['Lateral_Clean'])
-    if abs_lat < 15: lie_penalty = 0 # Fairway
-    elif abs_lat < 30: lie_penalty = 0.3 # Rough
-    else: lie_penalty = 1.1 # Recovery/Penalty
-    
-    # Expected strokes from remaining distance (Simple linear approx for amateur)
-    # E.g. from 150y = 3.2 strokes to hole
+    if abs_lat < 15: lie_penalty = 0 
+    elif abs_lat < 30: lie_penalty = 0.3 
+    else: lie_penalty = 1.1 
     strokes_from_dist = (dist_remaining / 100) + 2.0 
-    
-    # SG = Baseline - (Shot 1 + Remaining)
     sg = 4.10 - (1 + strokes_from_dist + lie_penalty)
     return sg
 
@@ -303,12 +295,10 @@ with st.sidebar:
     profiles = list(st.session_state['profiles'].keys())
     selected_profile = st.selectbox("Active Golfer:", profiles, index=profiles.index(st.session_state['active_user']))
     
-    # Logic to switch profile
     if selected_profile != st.session_state['active_user']:
         st.session_state['active_user'] = selected_profile
         st.rerun()
         
-    # Add New Profile
     new_prof_name = st.text_input("New Profile Name")
     if st.button("➕ Create Profile"):
         if new_prof_name and new_prof_name not in st.session_state['profiles']:
@@ -326,7 +316,6 @@ with st.sidebar:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
                     
-                    # Update ACTIVE PROFILE
                     st.session_state['profiles'][active_user]['df'] = restored
                     if 'Ref Loft' in restored.columns:
                         latest_lofts = restored.drop_duplicates('club', keep='last').set_index('club')['Ref Loft'].to_dict()
@@ -352,6 +341,12 @@ with st.sidebar:
             new_data = []
             for f in uploaded_files:
                 try:
+                    # Duplicate check using Filename
+                    current_filenames = master_df['Session'].unique() if not master_df.empty else []
+                    if f.name.replace('.csv', '') in current_filenames:
+                        st.toast(f"Skipped duplicate: {f.name}", icon="⚠️")
+                        continue
+                        
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
                     clean['Ref Loft'] = clean['club'].map(my_bag)
@@ -360,7 +355,6 @@ with st.sidebar:
             if new_data:
                 batch_df = pd.concat(new_data, ignore_index=True)
                 batch_df['Ref Loft'] = batch_df['Ref Loft'].fillna(30.0)
-                # Update ACTIVE PROFILE
                 st.session_state['profiles'][active_user]['df'] = pd.concat([master_df, batch_df], ignore_index=True)
                 st.success(f"Added {len(batch_df)} shots to {active_user}!")
                 st.rerun()
@@ -535,10 +529,9 @@ if not master_df.empty:
             fig = px.box(filtered_df.sort_values('SortIndex'), x='club', y='Carry (yds)', color='club', points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
 
-    # ================= TAB: STROKES GAINED (NEW) =================
+    # ================= TAB: STROKES GAINED =================
     with tab_sg:
         st.subheader("🏆 Strokes Gained Calculator (Estimator)")
-        
         sg_mode = st.radio("Mode:", ["Off The Tee (Driver)", "Approach (Irons)"], horizontal=True)
         
         if sg_mode == "Off The Tee (Driver)":
@@ -546,51 +539,29 @@ if not master_df.empty:
             if len(driver_data) > 0:
                 driver_data['SG_OTT'] = driver_data.apply(calculate_sg_off_tee, axis=1)
                 avg_sg = driver_data['SG_OTT'].mean()
-                
                 c_sg1, c_sg2 = st.columns(2)
-                c_sg1.markdown(f"""
-                <div class="sg-box">
-                    <h3 style="color:#4DD0E1">SG: Off The Tee</h3>
-                    <h1 style="color:#FFF">{avg_sg:+.2f}</h1>
-                    <p style="color:#BBB">per shot vs 15 HCP Baseline</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
+                c_sg1.markdown(f"""<div class="sg-box"><h3 style="color:#4DD0E1">SG: Off The Tee</h3><h1 style="color:#FFF">{avg_sg:+.2f}</h1><p style="color:#BBB">vs 15 HCP Baseline</p></div>""", unsafe_allow_html=True)
                 fig_sg = px.histogram(driver_data, x="SG_OTT", nbins=20, title="Distribution of Driver Performance")
                 fig_sg.add_vline(x=0, line_color="white", annotation_text="Baseline")
                 st.plotly_chart(style_fig(fig_sg), use_container_width=True)
-            else:
-                st.info("No Driver data found for this profile.")
+            else: st.info("No Driver data found.")
         else:
-            # Approach Logic (Proximity)
             st.info("ℹ️ SG: Approach compares your consistency to a Scratch Golfer's dispersion.")
             iron_clubs = [c for c in filtered_df['club'].unique() if "Iron" in c or "Wedge" in c]
             if iron_clubs:
                 sel_iron = st.selectbox("Select Iron:", iron_clubs)
                 iron_data = filtered_df[filtered_df['club'] == sel_iron]
-                
-                # Scratch Benchmark: 5% distance control, 4 degrees lateral
-                # Simple score: % of shots inside that circle
                 avg_dist = iron_data['Carry (yds)'].mean()
                 dist_tol = avg_dist * 0.05
                 lat_tol = avg_dist * np.tan(np.radians(4))
-                
-                good_shots = iron_data[
-                    (abs(iron_data['Carry (yds)'] - avg_dist) < dist_tol) &
-                    (abs(iron_data['Lateral_Clean']) < lat_tol)
-                ]
+                good_shots = iron_data[(abs(iron_data['Carry (yds)'] - avg_dist) < dist_tol) & (abs(iron_data['Lateral_Clean']) < lat_tol)]
                 score = len(good_shots) / len(iron_data) * 100
-                
                 c_app1, c_app2 = st.columns(2)
-                c_app1.metric("Scratch Consistency", f"{score:.0f}%", "Shots inside Scratch dispersion")
-                
+                c_app1.metric("Scratch Consistency", f"{score:.0f}%", "Shots inside Scratch zone")
                 fig_app = px.scatter(iron_data, x="Lateral_Clean", y="Carry (yds)", title=f"{sel_iron} vs Scratch Zone")
-                fig_app.add_shape(type="circle",
-                    x0=-lat_tol, y0=avg_dist-dist_tol, x1=lat_tol, y1=avg_dist+dist_tol,
-                    line_color="#00E676", fillcolor="#00E676", opacity=0.2)
+                fig_app.add_shape(type="circle", x0=-lat_tol, y0=avg_dist-dist_tol, x1=lat_tol, y1=avg_dist+dist_tol, line_color="#00E676", fillcolor="#00E676", opacity=0.2)
                 st.plotly_chart(style_fig(fig_app), use_container_width=True)
-            else:
-                st.warning("No Iron/Wedge data found.")
+            else: st.warning("No Iron/Wedge data found.")
 
     # ================= TAB: TIMELINE =================
     with tab_time:
@@ -633,6 +604,11 @@ if not master_df.empty:
             with col_m1: display_mech_metric(col_m1, "AoA (°)", 'AOA (°)', 0)
             with col_m2: display_mech_metric(col_m2, "Launch (°)", 'Launch V (°)', 1)
             with col_m3: display_mech_metric(col_m3, "Spin (rpm)", 'Spin (rpm)', 2)
+            
+            if 'Smash' in mech_data.columns:
+                smash_val = mech_data['Smash'].mean()
+                if smash_val < 1.30 and "driver" in str(mech_club).lower():
+                    st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> Low Smash Factor ({smash_val:.2f}). You might be striking the heel or toe.</div>", unsafe_allow_html=True)
 
             st.markdown("---")
             col_chart_m1, col_chart_m2 = st.columns([2, 1])
@@ -670,7 +646,6 @@ if not master_df.empty:
                 data_a = club_data[club_data['SessionLabel'] == sess_a]
                 data_b = club_data[club_data['SessionLabel'] == sess_b]
                 
-                # Determine Winner
                 a_carry = data_a['Carry (yds)'].mean()
                 b_carry = data_b['Carry (yds)'].mean()
                 a_acc = data_a['Lateral_Clean'].abs().mean()
@@ -682,6 +657,7 @@ if not master_df.empty:
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Carry Winner", win_carry, f"Diff: {abs(b_carry - a_carry):.1f}y")
                 m2.metric("Accuracy Winner", win_acc, f"Diff: {abs(b_acc - a_acc):.1f}y")
+                m3.metric("Consistency (Std Dev)", f"A: {data_a['Carry (yds)'].std():.1f} vs B: {data_b['Carry (yds)'].std():.1f}", delta_color="off")
                 
                 fig_hist = go.Figure()
                 fig_hist.add_trace(go.Histogram(x=data_a['Carry (yds)'], name='Session A', opacity=0.75, marker_color='#FF4081'))
