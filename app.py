@@ -57,7 +57,7 @@ st.markdown("""
         border: 1px solid #4DD0E1 !important;
     }
 
-    /* 5. DASHBOARD HERO CARDS */
+    /* 5. DASHBOARD CARDS */
     .hero-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border-radius: 15px;
@@ -134,8 +134,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 10px;
     }
-    
-    /* Feature Cards */
     .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
     
     /* Summary Stats (Sidebar) */
@@ -202,8 +200,9 @@ def get_smart_max(series, df_subset):
     ]
     if clean.empty: 
         return series.max()
-    # Safely get max carry from clean data
-    return clean.loc[clean['SL_Carry'].idxmax(), 'SL_Carry'] if 'SL_Carry' in clean.columns else series.max()
+    # Use Norm_Carry for Max calculation if available, otherwise raw
+    col_to_use = 'Norm_Carry' if 'Norm_Carry' in clean.columns else 'SL_Carry'
+    return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
     c_lower = str(club_name).lower()
@@ -263,6 +262,7 @@ def clean_mevo_data(df, filename, selected_date):
         df_clean['Altitude (ft)'] = df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',','')
         df_clean['Altitude (ft)'] = pd.to_numeric(df_clean['Altitude (ft)'], errors='coerce').fillna(0.0)
 
+    # Base Sea Level Calculation (Standardizes the raw data)
     df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     return df_clean
@@ -284,13 +284,13 @@ def filter_outliers(df):
             outlier_count += dropped_physics
             continue
 
-        # STAGE 2: IQR Check
-        q1 = valid_physics['Carry (yds)'].quantile(0.25)
-        q3 = valid_physics['Carry (yds)'].quantile(0.75)
+        # STAGE 2: IQR Check (On Normalized Carry if possible, but SL_Carry is safer for raw filtering)
+        q1 = valid_physics['SL_Carry'].quantile(0.25)
+        q3 = valid_physics['SL_Carry'].quantile(0.75)
         iqr = q3 - q1
         lower = q1 - (1.5 * iqr) 
         upper = q3 + (3.0 * iqr)
-        final_valid = valid_physics[(valid_physics['Carry (yds)'] >= lower) & (valid_physics['Carry (yds)'] <= upper)]
+        final_valid = valid_physics[(valid_physics['SL_Carry'] >= lower) & (valid_physics['SL_Carry'] <= upper)]
         outlier_count += (dropped_physics + (len(valid_physics) - len(final_valid)))
         df_filtered = pd.concat([df_filtered, final_valid])
         
@@ -323,7 +323,7 @@ def style_fig(fig):
 
 # --- STROKES GAINED CALCULATION LOGIC ---
 def calculate_sg_off_tee(row):
-    dist_remaining = 400 - row['Total (yds)']
+    dist_remaining = 400 - row['Norm_Total'] # Use Normalized Total
     if dist_remaining < 0: dist_remaining = 10
     abs_lat = abs(row['Lateral_Clean'])
     if abs_lat < 15: lie_penalty = 0 
@@ -337,6 +337,7 @@ def calculate_sg_off_tee(row):
 with st.sidebar:
     st.header("1. User Profile")
     
+    # PROFILE SWITCHER
     profiles = list(st.session_state['profiles'].keys())
     selected_profile = st.selectbox("Active Golfer:", profiles, index=profiles.index(st.session_state['active_user']))
     
@@ -429,15 +430,38 @@ with st.sidebar:
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
         st.dataframe(bag_df, hide_index=True, width="stretch", height=200)
             
+    # --- ENVIRONMENT CONFIG (NEW) ---
+    st.markdown("---")
+    st.header("5. Environment")
+    with st.expander("🌤️ Normalization", expanded=True):
+        sim_temp = st.slider("Temperature (°F)", 30, 110, 75, help="Adjust distances to this temp.")
+        play_alt = st.number_input("Altitude (ft)", value=0, step=500, help="Adjust for course altitude.")
+        ball_type = st.selectbox("Ball Type", ["Premium (100%)", "Economy (98%)", "Range - Hard (95%)", "Range - Limited (85%)"])
+        
+        # Calculate Global Factors
+        temp_factor = 1 + ((sim_temp - 70) * 0.001) # 1% per 10 degrees F
+        alt_factor = 1 + (play_alt / 1000.0 * 0.011) # 1.1% per 1000ft
+        
+        ball_map = {"Premium (100%)": 1.0, "Economy (98%)": 0.98, "Range - Hard (95%)": 0.95, "Range - Limited (85%)": 0.85}
+        ball_factor = ball_map[ball_type]
+        
+        total_norm_factor = temp_factor * alt_factor * ball_factor
+        
+        st.caption(f"**Total Adjustment: {total_norm_factor:.3f}x**")
+        if total_norm_factor > 1:
+            st.success(f"Projecting: +{((total_norm_factor-1)*100):.1f}% Gain")
+        else:
+            st.error(f"Projecting: {((total_norm_factor-1)*100):.1f}% Loss")
+
     # --- PLAYER CONFIG ---
     st.markdown("---")
-    st.header("5. Player Config")
+    st.header("6. Player Config")
     env_mode = st.radio("Filter:", ["All", "Outdoor Only", "Indoor Only"], index=0)
     handicap = st.number_input("Handicap", 0, 54, 15)
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
-    # SUMMARY STATS
+    # SUMMARY STATS (SIDEBAR)
     if not master_df.empty:
         st.markdown("---")
         tot_shots = len(master_df)
@@ -465,6 +489,10 @@ if not master_df.empty:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
+    # APPLY NORMALIZATION
+    filtered_df['Norm_Carry'] = filtered_df['SL_Carry'] * total_norm_factor
+    filtered_df['Norm_Total'] = filtered_df['SL_Total'] * total_norm_factor
+
     # --- TABS ---
     tab_home, tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🏠 Home", "🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
@@ -475,7 +503,7 @@ if not master_df.empty:
         
         driver_df = filtered_df[filtered_df['club'] == 'Driver']
         if not driver_df.empty:
-            longest_drive = get_smart_max(driver_df['SL_Carry'], driver_df)
+            longest_drive = get_smart_max(driver_df['Norm_Carry'], driver_df)
             fastest_ball = driver_df['Ball (mph)'].max()
         else:
             longest_drive = 0
@@ -492,7 +520,7 @@ if not master_df.empty:
         def render_hero(col, title, value, sub):
             col.markdown(f"""<div class="hero-card"><div class="hero-title">{title}</div><div class="hero-metric">{value}</div><div class="hero-sub">{sub}</div></div>""", unsafe_allow_html=True)
 
-        render_hero(c_h1, "Longest Drive", f"{longest_drive:.0f}<span style='font-size:20px'>y</span>", "Smart Max Potential")
+        render_hero(c_h1, "Longest Drive", f"{longest_drive:.0f}<span style='font-size:20px'>y</span>", f"@{sim_temp}°F / {ball_type.split()[0]}")
         render_hero(c_h2, "Ball Speed Record", f"{fastest_ball:.0f}<span style='font-size:20px'>mph</span>", "All-Time Max")
         render_hero(c_h3, "Total Volume", f"{total_shots}", f"Across {total_sessions} Sessions")
         render_hero(c_h4, "Favorite Club", f"{fav_club}", f"{fav_club_count} Shots Recorded")
@@ -508,28 +536,20 @@ if not master_df.empty:
 
     # ================= TAB: MY BAG =================
     with tab_bag:
-        st.subheader("🎒 My Bag & Yardages")
-        col_set1, col_set2 = st.columns([1, 3])
-        with col_set1:
-            play_alt = st.number_input("⛰️ Play Altitude (ft)", value=0, step=500, help="Adjust for course altitude.")
-            alt_factor = 1 + (play_alt / 1000.0 * 0.011)
-            if play_alt > 0: st.caption(f"Boost: +{((alt_factor-1)*100):.1f}%")
-
+        st.subheader(f"🎒 My Bag & Yardages (Normalized to {sim_temp}°F)")
+        
         bag_data = []
         for club in filtered_df['club'].unique():
             subset = filtered_df[filtered_df['club'] == club]
-            s_max = get_smart_max(subset['SL_Carry'], subset)
+            s_max = get_smart_max(subset['Norm_Carry'], subset)
             bag_data.append({
-                'Club': club, 'SL_Carry': subset['SL_Carry'].mean(), 'SL_Total': subset['SL_Total'].mean(),
+                'Club': club, 'Norm_Carry': subset['Norm_Carry'].mean(), 'Norm_Total': subset['Norm_Total'].mean(),
                 'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset)
             })
         
         bag_stats = pd.DataFrame(bag_data).set_index('Club')
         bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_stats = bag_stats.sort_values('SortIndex')
-        bag_stats['Adj. Carry'] = bag_stats['SL_Carry'] * alt_factor
-        bag_stats['Adj. Total'] = bag_stats['SL_Total'] * alt_factor
-        bag_stats['Adj. Max'] = bag_stats['Max Carry'] * alt_factor
         
         st.write("---")
         cols = st.columns(4)
@@ -538,12 +558,12 @@ if not master_df.empty:
                 st.markdown(f"""
                 <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
                     <h3 style="margin:0; color: #4DD0E1;">{index}</h3>
-                    <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Adj. Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
-                    <p style="margin:0; color: #BBB;">Total: <b>{row['Adj. Total']:.0f}</b> <span style="font-size:12px; color:#555">(n={int(row['Count'])})</span></p>
+                    <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
+                    <p style="margin:0; color: #BBB;">Total: <b>{row['Norm_Total']:.0f}</b> <span style="font-size:12px; color:#555">(n={int(row['Count'])})</span></p>
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
                         <span>Speed: {row['Ball Speed']:.0f}</span>
-                        <span style="color: #FFD700;">Pot: {row['Adj. Max']:.0f}</span>
+                        <span style="color: #FFD700;">Pot: {row['Max Carry']:.0f}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -565,16 +585,16 @@ if not master_df.empty:
                 on_target = len(subset[abs(subset['Lateral_Clean']) <= target_val]) / len(subset) * 100
                 c1.metric("Accuracy Score", f"{on_target:.0f}%", f"Target: ±{target_val:.1f}y")
                 c2.metric("Tendency", f"{abs(lat_mean):.1f}y", tendency_dir)
-                c3.metric("Avg Carry", f"{subset['Carry (yds)'].mean():.1f}")
+                c3.metric("Avg Carry", f"{subset['Norm_Carry'].mean():.1f}")
                 c4.metric("Ball Speed", f"{subset['Ball (mph)'].mean():.1f}")
 
                 c_chart1, c_chart2 = st.columns([3, 1])
                 with c_chart1:
                     subset['Shape'] = np.where(subset['Lateral_Clean'] > 0, 'Fade (R)', 'Draw (L)')
-                    fig = px.scatter(subset, x='Lateral_Clean', y='Carry (yds)', color='Shape',
+                    fig = px.scatter(subset, x='Lateral_Clean', y='Norm_Carry', color='Shape',
                         color_discrete_map={'Fade (R)': '#00E5FF', 'Draw (L)': '#FF4081'},
                         hover_data=['Date', 'Smash', 'Spin (rpm)'], title=f"Dispersion: {selected_club}")
-                    fig.add_shape(type="rect", x0=-target_val, y0=subset['Carry (yds)'].min()-10, x1=target_val, y1=subset['Carry (yds)'].max()+10,
+                    fig.add_shape(type="rect", x0=-target_val, y0=subset['Norm_Carry'].min()-10, x1=target_val, y1=subset['Norm_Carry'].max()+10,
                         line_color="#00E676", fillcolor="#00E676", opacity=0.1)
                     fig.add_vline(x=0, line_color="white", opacity=0.2)
                     st.plotly_chart(style_fig(fig), use_container_width=True)
@@ -588,7 +608,7 @@ if not master_df.empty:
     # ================= TAB: GAPPING =================
     with tab_gap:
         if len(filtered_df) > 0:
-            st.subheader("🎒 Bag Gapping")
+            st.subheader("🎒 Bag Gapping (Normalized)")
             with st.expander("ℹ️ How to read this chart?"):
                 st.markdown("""
                 * **The Box:** Represents your "Consistency Zone" (middle 50% of shots). A smaller box is better.
@@ -596,7 +616,7 @@ if not master_df.empty:
                 * **The Whiskers (Lines):** Your absolute range (Longest vs Shortest), excluding outliers.
                 """)
             filtered_df['SortIndex'] = filtered_df['club'].map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
-            fig = px.box(filtered_df.sort_values('SortIndex'), x='club', y='Carry (yds)', color='club', points="all")
+            fig = px.box(filtered_df.sort_values('SortIndex'), x='club', y='Norm_Carry', color='club', points="all")
             st.plotly_chart(style_fig(fig), use_container_width=True)
 
     # ================= TAB: STROKES GAINED =================
@@ -621,26 +641,26 @@ if not master_df.empty:
             if iron_clubs:
                 sel_iron = st.selectbox("Select Iron:", iron_clubs)
                 iron_data = filtered_df[filtered_df['club'] == sel_iron]
-                avg_dist = iron_data['Carry (yds)'].mean()
+                avg_dist = iron_data['Norm_Carry'].mean()
                 dist_tol = avg_dist * 0.05
                 lat_tol = avg_dist * np.tan(np.radians(4))
-                good_shots = iron_data[(abs(iron_data['Carry (yds)'] - avg_dist) < dist_tol) & (abs(iron_data['Lateral_Clean']) < lat_tol)]
+                good_shots = iron_data[(abs(iron_data['Norm_Carry'] - avg_dist) < dist_tol) & (abs(iron_data['Lateral_Clean']) < lat_tol)]
                 score = len(good_shots) / len(iron_data) * 100
                 c_app1, c_app2 = st.columns(2)
                 c_app1.metric("Scratch Consistency", f"{score:.0f}%", "Shots inside Scratch zone")
-                fig_app = px.scatter(iron_data, x="Lateral_Clean", y="Carry (yds)", title=f"{sel_iron} vs Scratch Zone")
+                fig_app = px.scatter(iron_data, x="Lateral_Clean", y="Norm_Carry", title=f"{sel_iron} vs Scratch Zone")
                 fig_app.add_shape(type="circle", x0=-lat_tol, y0=avg_dist-dist_tol, x1=lat_tol, y1=avg_dist+dist_tol, line_color="#00E676", fillcolor="#00E676", opacity=0.2)
                 st.plotly_chart(style_fig(fig_app), use_container_width=True)
             else: st.warning("No Iron/Wedge data found.")
 
-    # ================= TAB: TIMELINE (NEW: CONSISTENCY BANDS) =================
+    # ================= TAB: TIMELINE =================
     with tab_time:
         if len(filtered_df) > 0:
             st.subheader("📈 Timeline")
             c_t1, c_t2 = st.columns(2)
             avail_clubs = [c for c in CLUB_SORT_ORDER if c in filtered_df['club'].unique()]
             with c_t1: t_club = st.selectbox("Club", avail_clubs, key='t_club')
-            with c_t2: metric = st.selectbox("Metric", ['Ball (mph)', 'Carry (yds)', 'Club (mph)', 'Smash'])
+            with c_t2: metric = st.selectbox("Metric", ['Ball (mph)', 'Norm_Carry', 'Club (mph)', 'Smash'])
             
             if 'Date' in filtered_df.columns:
                 club_data = filtered_df[filtered_df['club'] == t_club]
@@ -651,12 +671,9 @@ if not master_df.empty:
                 
                 if len(trend) > 1:
                     fig = go.Figure()
-                    # Confidence Band
                     fig.add_trace(go.Scatter(x=trend['Date'], y=trend['upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
                     fig.add_trace(go.Scatter(x=trend['Date'], y=trend['lower'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 230, 118, 0.2)', showlegend=False, hoverinfo='skip'))
-                    # Main Line
                     fig.add_trace(go.Scatter(x=trend['Date'], y=trend['mean'], mode='lines+markers', name='Average', line=dict(color='#00E676', width=3), marker=dict(size=8, color='#00E676')))
-                    
                     fig.update_layout(title=f"{t_club} Progress: Average ± Consistency", yaxis_title=metric, hovermode="x unified", template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption("ℹ️ The shaded green area represents your consistency (Standard Deviation). A narrower band means more consistent performance.")
@@ -701,8 +718,8 @@ if not master_df.empty:
             with col_chart_m1:
                 if 'Height (ft)' in mech_data.columns:
                     st.markdown("#### ✈️ Trajectory Window")
-                    fig_traj = px.scatter(mech_data, x='Carry (yds)', y='Height (ft)', color='Session')
-                    fig_traj.add_shape(type="rect", x0=mech_data['Carry (yds)'].min(), y0=80, x1=mech_data['Carry (yds)'].max(), y1=110, line=dict(color="Gold", width=0), fillcolor="Gold", opacity=0.1)
+                    fig_traj = px.scatter(mech_data, x='Norm_Carry', y='Height (ft)', color='Session')
+                    fig_traj.add_shape(type="rect", x0=mech_data['Norm_Carry'].min(), y0=80, x1=mech_data['Norm_Carry'].max(), y1=110, line=dict(color="Gold", width=0), fillcolor="Gold", opacity=0.1)
                     st.plotly_chart(style_fig(fig_traj), use_container_width=True)
             with col_chart_m2:
                 if 'Club Path_Clean' in mech_data.columns and 'FTP_Clean' in mech_data.columns:
@@ -733,8 +750,8 @@ if not master_df.empty:
                 data_b = club_data[club_data['SessionLabel'] == sess_b]
                 
                 # Determine Winner
-                a_carry = data_a['Carry (yds)'].mean()
-                b_carry = data_b['Carry (yds)'].mean()
+                a_carry = data_a['Norm_Carry'].mean()
+                b_carry = data_b['Norm_Carry'].mean()
                 a_acc = data_a['Lateral_Clean'].abs().mean()
                 b_acc = data_b['Lateral_Clean'].abs().mean()
                 
@@ -744,11 +761,11 @@ if not master_df.empty:
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Carry Winner", win_carry, f"Diff: {abs(b_carry - a_carry):.1f}y")
                 m2.metric("Accuracy Winner", win_acc, f"Diff: {abs(b_acc - a_acc):.1f}y")
-                m3.metric("Consistency (Std Dev)", f"A: {data_a['Carry (yds)'].std():.1f} vs B: {data_b['Carry (yds)'].std():.1f}", delta_color="off")
+                m3.metric("Consistency (Std Dev)", f"A: {data_a['Norm_Carry'].std():.1f} vs B: {data_b['Norm_Carry'].std():.1f}", delta_color="off")
                 
                 fig_hist = go.Figure()
-                fig_hist.add_trace(go.Histogram(x=data_a['Carry (yds)'], name='Session A', opacity=0.75, marker_color='#FF4081'))
-                fig_hist.add_trace(go.Histogram(x=data_b['Carry (yds)'], name='Session B', opacity=0.75, marker_color='#00E5FF'))
+                fig_hist.add_trace(go.Histogram(x=data_a['Norm_Carry'], name='Session A', opacity=0.75, marker_color='#FF4081'))
+                fig_hist.add_trace(go.Histogram(x=data_b['Norm_Carry'], name='Session B', opacity=0.75, marker_color='#00E5FF'))
                 fig_hist.update_layout(barmode='overlay', title=f"Carry Distance Distribution")
                 st.plotly_chart(style_fig(fig_hist), use_container_width=True)
             else: st.warning("Select different sessions.")
