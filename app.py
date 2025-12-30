@@ -545,9 +545,15 @@ if not master_df.empty:
         for club in filtered_df['club'].unique():
             subset = filtered_df[filtered_df['club'] == club]
             s_max = get_smart_max(subset['Norm_Carry'], subset)
+            
+            # Stock Range (20th - 80th Percentile)
+            p20 = subset['Norm_Carry'].quantile(0.20)
+            p80 = subset['Norm_Carry'].quantile(0.80)
+            
             bag_data.append({
                 'Club': club, 'Norm_Carry': subset['Norm_Carry'].mean(), 'Norm_Total': subset['Norm_Total'].mean(),
-                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset)
+                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset),
+                'Range_Min': p20, 'Range_Max': p80
             })
         
         bag_stats = pd.DataFrame(bag_data).set_index('Club')
@@ -562,7 +568,7 @@ if not master_df.empty:
                 <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
                     <h3 style="margin:0; color: #4DD0E1;">{index}</h3>
                     <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
-                    <p style="margin:0; color: #BBB;">Total: <b>{row['Norm_Total']:.0f}</b> <span style="font-size:12px; color:#555">(n={int(row['Count'])})</span></p>
+                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row['Range_Min']:.0f} - {row['Range_Max']:.0f}</div>
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
                         <span>Speed: {row['Ball Speed']:.0f}</span>
@@ -702,7 +708,6 @@ if not master_df.empty:
             st.plotly_chart(fig_tgt, use_container_width=True)
             
             st.caption("Detailed Shot Scoring:")
-            # FIXED: Replaced use_container_width=True with width="stretch"
             st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"), width="stretch")
         else:
             st.info("No shots found for this club in this session.")
