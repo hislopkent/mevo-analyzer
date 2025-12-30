@@ -271,7 +271,6 @@ def filter_outliers(df):
     for club in df['club'].unique():
         club_data = df[df['club'] == club].copy()
         
-        # STAGE 1: Physics Check
         valid_physics = club_data[
             (club_data['Smash'] <= 1.58) & (club_data['Smash'] >= 1.0) &
             (club_data['Spin (rpm)'] > 500) & (club_data['Height (ft)'] > 8)
@@ -282,7 +281,6 @@ def filter_outliers(df):
             outlier_count += dropped_physics
             continue
 
-        # STAGE 2: IQR Check
         q1 = valid_physics['SL_Carry'].quantile(0.25)
         q3 = valid_physics['SL_Carry'].quantile(0.75)
         iqr = q3 - q1
@@ -319,7 +317,6 @@ def style_fig(fig):
     fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# --- STROKES GAINED CALCULATION LOGIC ---
 def calculate_sg_off_tee(row):
     dist_remaining = 400 - row['Norm_Total']
     if dist_remaining < 0: dist_remaining = 10
@@ -335,7 +332,6 @@ def calculate_sg_off_tee(row):
 with st.sidebar:
     st.header("1. User Profile")
     
-    # PROFILE SWITCHER
     profiles = list(st.session_state['profiles'].keys())
     selected_profile = st.selectbox("Active Golfer:", profiles, index=profiles.index(st.session_state['active_user']))
     
@@ -343,7 +339,6 @@ with st.sidebar:
         st.session_state['active_user'] = selected_profile
         st.rerun()
         
-    # RENAME PROFILE (NEW)
     with st.expander("👤 Manage Profile"):
         new_name_input = st.text_input("Rename Current Profile:", value=active_user)
         if st.button("💾 Rename"):
@@ -351,13 +346,11 @@ with st.sidebar:
                 if new_name_input in st.session_state['profiles']:
                     st.error("Name already exists!")
                 else:
-                    # Copy data to new key
                     st.session_state['profiles'][new_name_input] = st.session_state['profiles'].pop(active_user)
                     st.session_state['active_user'] = new_name_input
                     st.success(f"Renamed to {new_name_input}")
                     st.rerun()
     
-    # CREATE NEW PROFILE
     new_create_name = st.text_input("New Profile Name", key="create_new_prof")
     if st.button("➕ Create New Profile", use_container_width=True):
         if new_create_name and new_create_name not in st.session_state['profiles']:
@@ -505,7 +498,7 @@ if not master_df.empty:
     filtered_df['Norm_Total'] = filtered_df['SL_Total'] * total_norm_factor
 
     # --- TABS ---
-    tab_home, tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🏠 Home", "🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
+    tab_home, tab_bag, tab_acc, tab_gap, tab_sg, tab_target, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🏠 Home", "🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "🎯 Target", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
     # ================= TAB: HOME DASHBOARD =================
     with tab_home:
@@ -548,7 +541,6 @@ if not master_df.empty:
     # ================= TAB: MY BAG =================
     with tab_bag:
         st.subheader(f"🎒 My Bag & Yardages (Normalized to {sim_temp}°F)")
-        
         bag_data = []
         for club in filtered_df['club'].unique():
             subset = filtered_df[filtered_df['club'] == club]
@@ -663,6 +655,87 @@ if not master_df.empty:
                 fig_app.add_shape(type="circle", x0=-lat_tol, y0=avg_dist-dist_tol, x1=lat_tol, y1=avg_dist+dist_tol, line_color="#00E676", fillcolor="#00E676", opacity=0.2)
                 st.plotly_chart(style_fig(fig_app), use_container_width=True)
             else: st.warning("No Iron/Wedge data found.")
+
+    # ================= TAB: TARGET MODE =================
+    with tab_target:
+        st.subheader("🎯 Target Practice Challenge")
+        
+        # 1. Inputs
+        c_tgt1, c_tgt2, c_tgt3 = st.columns(3)
+        available_sessions = filtered_df['Session'].unique()
+        with c_tgt1: 
+            tgt_session = st.selectbox("1. Select Session", available_sessions)
+        
+        session_data = filtered_df[filtered_df['Session'] == tgt_session]
+        available_clubs_sess = session_data['club'].unique()
+        with c_tgt2:
+            tgt_club = st.selectbox("2. Select Club", available_clubs_sess)
+            
+        with c_tgt3:
+            tgt_dist = st.number_input("3. Target Distance (yds)", value=150, step=5)
+            
+        # 2. Logic
+        target_subset = session_data[session_data['club'] == tgt_club].copy()
+        
+        if not target_subset.empty:
+            # Score = 100 - (Distance Error + Lateral Error)
+            target_subset['Dist_Err'] = abs(target_subset['Norm_Carry'] - tgt_dist)
+            target_subset['Lat_Err'] = abs(target_subset['Lateral_Clean'])
+            target_subset['Total_Err'] = target_subset['Dist_Err'] + target_subset['Lat_Err']
+            target_subset['Score'] = np.maximum(0, 100 - target_subset['Total_Err'])
+            
+            avg_score = target_subset['Score'].mean()
+            best_shot = target_subset['Score'].max()
+            
+            # 3. Metrics
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Session Score", f"{avg_score:.0f} / 100")
+            m2.metric("Best Shot", f"{best_shot:.0f} / 100")
+            m3.metric("Shots Scored", len(target_subset))
+            
+            # 4. Dartboard Visual
+            fig_tgt = go.Figure()
+            
+            # Rings
+            for r, color in zip([10, 20, 30], ['green', 'yellow', 'red']):
+                fig_tgt.add_shape(type="circle",
+                    x0=-r, y0=tgt_dist-r, x1=r, y1=tgt_dist+r,
+                    line_color=color, opacity=0.3
+                )
+            
+            # Shots
+            fig_tgt.add_trace(go.Scatter(
+                x=target_subset['Lateral_Clean'], 
+                y=target_subset['Norm_Carry'],
+                mode='markers',
+                marker=dict(size=12, color=target_subset['Score'], colorscale='RdYlGn', showscale=True),
+                text=target_subset['Score'].apply(lambda x: f"Score: {x:.0f}"),
+                hoverinfo='text+x+y'
+            ))
+            
+            # Target Center
+            fig_tgt.add_trace(go.Scatter(x=[0], y=[tgt_dist], mode='markers', marker=dict(symbol='cross', size=15, color='white'), name='Target'))
+            
+            fig_tgt.update_layout(
+                title=f"Target: {tgt_dist}y | Club: {tgt_club}",
+                xaxis_title="Left <-> Right (yds)",
+                yaxis_title="Carry Distance (yds)",
+                yaxis=dict(range=[tgt_dist-50, tgt_dist+50]),
+                xaxis=dict(range=[-40, 40]),
+                showlegend=False,
+                template="plotly_dark",
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                height=600
+            )
+            st.plotly_chart(fig_tgt, use_container_width=True)
+            
+            # Table
+            st.caption("Detailed Shot Scoring:")
+            st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"), use_container_width=True)
+            
+        else:
+            st.info("No shots found for this club in this session.")
 
     # ================= TAB: TIMELINE =================
     with tab_time:
