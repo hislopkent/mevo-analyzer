@@ -659,8 +659,6 @@ if not master_df.empty:
     # ================= TAB: TARGET MODE =================
     with tab_target:
         st.subheader("🎯 Target Practice Challenge")
-        
-        # 1. Inputs
         c_tgt1, c_tgt2, c_tgt3 = st.columns(3)
         available_sessions = filtered_df['Session'].unique()
         with c_tgt1: 
@@ -674,11 +672,9 @@ if not master_df.empty:
         with c_tgt3:
             tgt_dist = st.number_input("3. Target Distance (yds)", value=150, step=5)
             
-        # 2. Logic
         target_subset = session_data[session_data['club'] == tgt_club].copy()
         
         if not target_subset.empty:
-            # Score = 100 - (Distance Error + Lateral Error)
             target_subset['Dist_Err'] = abs(target_subset['Norm_Carry'] - tgt_dist)
             target_subset['Lat_Err'] = abs(target_subset['Lateral_Clean'])
             target_subset['Total_Err'] = target_subset['Dist_Err'] + target_subset['Lat_Err']
@@ -687,53 +683,27 @@ if not master_df.empty:
             avg_score = target_subset['Score'].mean()
             best_shot = target_subset['Score'].max()
             
-            # 3. Metrics
             m1, m2, m3 = st.columns(3)
             m1.metric("Session Score", f"{avg_score:.0f} / 100")
             m2.metric("Best Shot", f"{best_shot:.0f} / 100")
             m3.metric("Shots Scored", len(target_subset))
             
-            # 4. Dartboard Visual
             fig_tgt = go.Figure()
-            
-            # Rings
             for r, color in zip([10, 20, 30], ['green', 'yellow', 'red']):
-                fig_tgt.add_shape(type="circle",
-                    x0=-r, y0=tgt_dist-r, x1=r, y1=tgt_dist+r,
-                    line_color=color, opacity=0.3
-                )
+                fig_tgt.add_shape(type="circle", x0=-r, y0=tgt_dist-r, x1=r, y1=tgt_dist+r, line_color=color, opacity=0.3)
             
-            # Shots
             fig_tgt.add_trace(go.Scatter(
-                x=target_subset['Lateral_Clean'], 
-                y=target_subset['Norm_Carry'],
-                mode='markers',
-                marker=dict(size=12, color=target_subset['Score'], colorscale='RdYlGn', showscale=True),
-                text=target_subset['Score'].apply(lambda x: f"Score: {x:.0f}"),
-                hoverinfo='text+x+y'
+                x=target_subset['Lateral_Clean'], y=target_subset['Norm_Carry'],
+                mode='markers', marker=dict(size=12, color=target_subset['Score'], colorscale='RdYlGn', showscale=True),
+                text=target_subset['Score'].apply(lambda x: f"Score: {x:.0f}"), hoverinfo='text+x+y'
             ))
-            
-            # Target Center
             fig_tgt.add_trace(go.Scatter(x=[0], y=[tgt_dist], mode='markers', marker=dict(symbol='cross', size=15, color='white'), name='Target'))
-            
-            fig_tgt.update_layout(
-                title=f"Target: {tgt_dist}y | Club: {tgt_club}",
-                xaxis_title="Left <-> Right (yds)",
-                yaxis_title="Carry Distance (yds)",
-                yaxis=dict(range=[tgt_dist-50, tgt_dist+50]),
-                xaxis=dict(range=[-40, 40]),
-                showlegend=False,
-                template="plotly_dark",
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                height=600
-            )
+            fig_tgt.update_layout(title=f"Target: {tgt_dist}y | Club: {tgt_club}", xaxis_title="Left <-> Right (yds)", yaxis_title="Carry Distance (yds)", yaxis=dict(range=[tgt_dist-50, tgt_dist+50]), xaxis=dict(range=[-40, 40]), showlegend=False, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=600)
             st.plotly_chart(fig_tgt, use_container_width=True)
             
-            # Table
             st.caption("Detailed Shot Scoring:")
-            st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"), use_container_width=True)
-            
+            # FIXED: Replaced use_container_width=True with width="stretch"
+            st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"), width="stretch")
         else:
             st.info("No shots found for this club in this session.")
 
