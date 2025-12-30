@@ -164,6 +164,19 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 1px;
     }
+    
+    /* Efficiency Bar */
+    .eff-container {
+        background-color: #333;
+        border-radius: 10px;
+        padding: 5px;
+        margin-top: 10px;
+    }
+    .eff-bar-fill {
+        height: 10px;
+        background: linear-gradient(90deg, #FF4081, #00E5FF);
+        border-radius: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -190,16 +203,9 @@ my_bag = st.session_state['profiles'][active_user]['bag']
 
 # --- 2. HELPERS ---
 def get_smart_max(series, df_subset):
-    """Calculates max value filtering out physics-defying outliers."""
     valid = df_subset.loc[series.index]
-    clean = valid[
-        (valid['Smash'] <= 1.58) & 
-        (valid['Smash'] >= 1.0) &
-        (valid['Spin (rpm)'] > 500) & 
-        (valid['Height (ft)'] > 8)
-    ]
-    if clean.empty: 
-        return series.max()
+    clean = valid[(valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) & (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)]
+    if clean.empty: return series.max()
     col_to_use = 'Norm_Carry' if 'Norm_Carry' in clean.columns else 'SL_Carry'
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
@@ -227,6 +233,16 @@ def get_dynamic_ranges(club_name, handicap):
         s_base = user_loft * 210
         spin = (s_base - 1000 - (tolerance*100), s_base + 1000 + (tolerance*100))
     return aoa, launch, spin
+
+def calculate_optimal_carry(club_speed, club_name):
+    # Multipliers based on PGA/LPGA optimal efficiency
+    c_lower = str(club_name).lower()
+    if 'driver' in c_lower: multiplier = 2.75
+    elif 'wood' in c_lower or 'hybrid' in c_lower: multiplier = 2.55
+    elif 'wedge' in c_lower or 'sw' in c_lower or 'lw' in c_lower: multiplier = 2.0
+    else: multiplier = 2.4 # Irons
+    
+    return club_speed * multiplier
 
 def clean_mevo_data(df, filename, selected_date):
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
@@ -546,7 +562,6 @@ if not master_df.empty:
             subset = filtered_df[filtered_df['club'] == club]
             s_max = get_smart_max(subset['Norm_Carry'], subset)
             
-            # Stock Range (20th - 80th Percentile)
             p20 = subset['Norm_Carry'].quantile(0.20)
             p80 = subset['Norm_Carry'].quantile(0.80)
             
@@ -741,7 +756,7 @@ if not master_df.empty:
             else: 
                 st.warning("No Date info.")
 
-    # ================= TAB: MECHANICS =================
+    # ================= TAB: MECHANICS (NEW: EFFICIENCY LAB) =================
     with tab_mech:
         if len(filtered_df) > 0:
             st.subheader("🔬 Swing Mechanics")
@@ -754,6 +769,31 @@ if not master_df.empty:
 
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
+            # --- NEW EFFICIENCY LAB ---
+            if 'Club (mph)' in mech_data.columns and 'Norm_Carry' in mech_data.columns:
+                with st.expander("🚀 Swing Efficiency Lab (New)", expanded=True):
+                    avg_speed = mech_data['Club (mph)'].mean()
+                    avg_carry = mech_data['Norm_Carry'].mean()
+                    
+                    # Calculate Potential
+                    potential = calculate_optimal_carry(avg_speed, mech_club)
+                    efficiency_pct = (avg_carry / potential) * 100
+                    
+                    e1, e2, e3 = st.columns(3)
+                    e1.metric("Your Speed", f"{avg_speed:.1f} mph")
+                    e2.metric("Potential Carry", f"{potential:.0f} yds", help="Based on PGA optimal launch conditions")
+                    e3.metric("Efficiency Rating", f"{efficiency_pct:.0f}%", f"{avg_carry - potential:.0f} yds Gap")
+                    
+                    # Visual Bar
+                    st.markdown(f"""
+                    <div style="background-color: #333; border-radius: 5px; height: 10px; width: 100%;">
+                        <div style="background: linear-gradient(90deg, #FF4081, #00E5FF); width: {min(efficiency_pct, 100)}%; height: 100%; border-radius: 5px;"></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if efficiency_pct < 85:
+                        st.info("💡 **Coach Tip:** Your efficiency is low. You have the speed for more distance! Check your Launch Angle (is it too low?) and Spin Rate (is it too high?).")
+
+            st.markdown("---")
             col_m1, col_m2, col_m3 = st.columns(3)
             def display_mech_metric(col, label, key, idx):
                 if key in mech_data.columns:
