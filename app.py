@@ -200,7 +200,6 @@ def get_smart_max(series, df_subset):
     ]
     if clean.empty: 
         return series.max()
-    # Use Norm_Carry for Max calculation if available, otherwise raw
     col_to_use = 'Norm_Carry' if 'Norm_Carry' in clean.columns else 'SL_Carry'
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
@@ -262,7 +261,6 @@ def clean_mevo_data(df, filename, selected_date):
         df_clean['Altitude (ft)'] = df_clean['Altitude (ft)'].astype(str).str.replace(' ft','').str.replace(',','')
         df_clean['Altitude (ft)'] = pd.to_numeric(df_clean['Altitude (ft)'], errors='coerce').fillna(0.0)
 
-    # Base Sea Level Calculation (Standardizes the raw data)
     df_clean['SL_Carry'] = df_clean['Carry (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     df_clean['SL_Total'] = df_clean['Total (yds)'] / (1 + (df_clean['Altitude (ft)'] / 1000.0 * 0.011))
     return df_clean
@@ -284,7 +282,7 @@ def filter_outliers(df):
             outlier_count += dropped_physics
             continue
 
-        # STAGE 2: IQR Check (On Normalized Carry if possible, but SL_Carry is safer for raw filtering)
+        # STAGE 2: IQR Check
         q1 = valid_physics['SL_Carry'].quantile(0.25)
         q3 = valid_physics['SL_Carry'].quantile(0.75)
         iqr = q3 - q1
@@ -323,7 +321,7 @@ def style_fig(fig):
 
 # --- STROKES GAINED CALCULATION LOGIC ---
 def calculate_sg_off_tee(row):
-    dist_remaining = 400 - row['Norm_Total'] # Use Normalized Total
+    dist_remaining = 400 - row['Norm_Total']
     if dist_remaining < 0: dist_remaining = 10
     abs_lat = abs(row['Lateral_Clean'])
     if abs_lat < 15: lie_penalty = 0 
@@ -345,11 +343,26 @@ with st.sidebar:
         st.session_state['active_user'] = selected_profile
         st.rerun()
         
-    new_prof_name = st.text_input("New Profile Name")
-    if st.button("➕ Create Profile", use_container_width=True):
-        if new_prof_name and new_prof_name not in st.session_state['profiles']:
-            st.session_state['profiles'][new_prof_name] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
-            st.success(f"Created {new_prof_name}")
+    # RENAME PROFILE (NEW)
+    with st.expander("👤 Manage Profile"):
+        new_name_input = st.text_input("Rename Current Profile:", value=active_user)
+        if st.button("💾 Rename"):
+            if new_name_input and new_name_input != active_user:
+                if new_name_input in st.session_state['profiles']:
+                    st.error("Name already exists!")
+                else:
+                    # Copy data to new key
+                    st.session_state['profiles'][new_name_input] = st.session_state['profiles'].pop(active_user)
+                    st.session_state['active_user'] = new_name_input
+                    st.success(f"Renamed to {new_name_input}")
+                    st.rerun()
+    
+    # CREATE NEW PROFILE
+    new_create_name = st.text_input("New Profile Name", key="create_new_prof")
+    if st.button("➕ Create New Profile", use_container_width=True):
+        if new_create_name and new_create_name not in st.session_state['profiles']:
+            st.session_state['profiles'][new_create_name] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
+            st.success(f"Created {new_create_name}")
             st.rerun()
 
     st.markdown("---")
@@ -430,7 +443,7 @@ with st.sidebar:
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
         st.dataframe(bag_df, hide_index=True, width="stretch", height=200)
             
-    # --- ENVIRONMENT CONFIG (NEW) ---
+    # --- ENVIRONMENT CONFIG ---
     st.markdown("---")
     st.header("5. Environment")
     with st.expander("🌤️ Normalization", expanded=True):
@@ -438,10 +451,8 @@ with st.sidebar:
         play_alt = st.number_input("Altitude (ft)", value=0, step=500, help="Adjust for course altitude.")
         ball_type = st.selectbox("Ball Type", ["Premium (100%)", "Economy (98%)", "Range - Hard (95%)", "Range - Limited (85%)"])
         
-        # Calculate Global Factors
-        temp_factor = 1 + ((sim_temp - 70) * 0.001) # 1% per 10 degrees F
-        alt_factor = 1 + (play_alt / 1000.0 * 0.011) # 1.1% per 1000ft
-        
+        temp_factor = 1 + ((sim_temp - 70) * 0.001) 
+        alt_factor = 1 + (play_alt / 1000.0 * 0.011) 
         ball_map = {"Premium (100%)": 1.0, "Economy (98%)": 0.98, "Range - Hard (95%)": 0.95, "Range - Limited (85%)": 0.85}
         ball_factor = ball_map[ball_type]
         
