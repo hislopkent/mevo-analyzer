@@ -30,7 +30,7 @@ st.markdown("""
     }
 
     /* 3. FIX PLAYER CONFIG INPUTS */
-    section[data-testid="stSidebar"] input {
+    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] select {
         background-color: #262730 !important;
         color: #FAFAFA !important;
         border: 1px solid #444 !important;
@@ -57,33 +57,38 @@ st.markdown("""
         border: 1px solid #4DD0E1 !important;
     }
 
-    /* 5. REDESIGNED STATS BOX */
-    .stat-card-container {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    .stat-card {
+    /* 5. DASHBOARD HERO CARDS (New for Home Tab) */
+    .hero-card {
         background: linear-gradient(145deg, #1E222B, #262730);
-        border-radius: 12px;
-        padding: 15px;
-        flex: 1;
+        border-radius: 15px;
+        padding: 20px;
         text-align: center;
-        border: 1px solid #333;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border: 1px solid #444;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        height: 100%;
+        transition: transform 0.2s;
     }
-    .stat-value {
-        font-size: 28px;
-        font-weight: 700;
-        color: #4DD0E1;
-        margin: 0;
+    .hero-card:hover {
+        transform: translateY(-5px);
+        border-color: #4DD0E1;
     }
-    .stat-label {
+    .hero-title {
         font-size: 14px;
-        color: #B0B3B8;
-        margin: 0;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 1.5px;
+        color: #B0B3B8;
+        margin-bottom: 10px;
+    }
+    .hero-metric {
+        font-size: 36px;
+        font-weight: 800;
+        color: #FAFAFA;
+        margin: 0;
+    }
+    .hero-sub {
+        font-size: 12px;
+        color: #00E5FF;
+        margin-top: 5px;
     }
 
     /* 6. TAB VISIBILITY FIXES */
@@ -129,9 +134,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 10px;
     }
-    
-    /* Feature Cards */
-    .feature-card { background-color: #1E222B; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -157,6 +159,21 @@ master_df = st.session_state['profiles'][active_user]['df']
 my_bag = st.session_state['profiles'][active_user]['bag']
 
 # --- 2. HELPERS ---
+def get_smart_max(series, df_subset):
+    """Calculates max value filtering out physics-defying outliers."""
+    # Ensure indices match
+    valid = df_subset.loc[series.index]
+    # Filter for realistic shots
+    clean = valid[
+        (valid['Smash'] <= 1.58) & 
+        (valid['Smash'] >= 1.0) &
+        (valid['Spin (rpm)'] > 500) & 
+        (valid['Height (ft)'] > 8)
+    ]
+    if clean.empty: 
+        return series.max() # Fallback if everything is filtered
+    return clean.loc[clean['SL_Carry'].idxmax(), 'SL_Carry'] if 'SL_Carry' in clean.columns else series.max()
+
 def get_dynamic_ranges(club_name, handicap):
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
@@ -289,7 +306,6 @@ def calculate_sg_off_tee(row):
 with st.sidebar:
     st.header("1. User Profile")
     
-    # PROFILE SWITCHER
     profiles = list(st.session_state['profiles'].keys())
     selected_profile = st.selectbox("Active Golfer:", profiles, index=profiles.index(st.session_state['active_user']))
     
@@ -339,7 +355,6 @@ with st.sidebar:
             new_data = []
             for f in uploaded_files:
                 try:
-                    # Duplicate check using Filename
                     current_filenames = master_df['Session'].unique() if not master_df.empty else []
                     if f.name.replace('.csv', '') in current_filenames:
                         st.toast(f"Skipped duplicate: {f.name}", icon="⚠️")
@@ -381,8 +396,6 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        
-        # UPDATED: Replaced deprecated `use_container_width` with `width="stretch"`
         st.dataframe(bag_df, hide_index=True, width="stretch", height=200)
             
     # --- PLAYER CONFIG ---
@@ -393,7 +406,7 @@ with st.sidebar:
     smash_cap = st.slider("Max Smash Cap", 1.40, 1.65, 1.52, 0.01)
     remove_bad_shots = st.checkbox("Auto-Clean Outliers", value=True)
 
-    # SUMMARY STATS
+    # SUMMARY STATS (SIDEBAR)
     if not master_df.empty:
         st.markdown("---")
         tot_shots = len(master_df)
@@ -421,10 +434,59 @@ if not master_df.empty:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    st.caption(f"Analyzing {len(filtered_df)} shots for {active_user}")
-
     # --- TABS ---
-    tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
+    tab_home, tab_bag, tab_acc, tab_gap, tab_sg, tab_time, tab_mech, tab_comp, tab_faq = st.tabs(["🏠 Home", "🎒 My Bag", "🎯 Accuracy", "📏 Gapping", "🏆 Strokes Gained", "📈 Timeline", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
+
+    # ================= TAB: HOME DASHBOARD (NEW) =================
+    with tab_home:
+        # Calculate Aggregates
+        total_shots = len(filtered_df)
+        total_sessions = filtered_df['Date'].nunique()
+        
+        # Longest Drive (Smart Max)
+        driver_df = filtered_df[filtered_df['club'] == 'Driver']
+        if not driver_df.empty:
+            longest_drive = get_smart_max(driver_df['SL_Carry'], driver_df)
+            fastest_ball = driver_df['Ball (mph)'].max()
+        else:
+            longest_drive = 0
+            fastest_ball = filtered_df['Ball (mph)'].max() if not filtered_df.empty else 0
+            
+        # Favorite Club
+        if not filtered_df.empty:
+            fav_club = filtered_df['club'].mode()[0]
+            fav_club_count = len(filtered_df[filtered_df['club'] == fav_club])
+        else:
+            fav_club = "-"
+            fav_club_count = 0
+
+        # HERO CARDS LAYOUT
+        c_h1, c_h2, c_h3, c_h4 = st.columns(4)
+        
+        def render_hero(col, title, value, sub):
+            col.markdown(f"""
+            <div class="hero-card">
+                <div class="hero-title">{title}</div>
+                <div class="hero-metric">{value}</div>
+                <div class="hero-sub">{sub}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        render_hero(c_h1, "Longest Drive", f"{longest_drive:.0f}<span style='font-size:20px'>y</span>", "Smart Max Potential")
+        render_hero(c_h2, "Ball Speed Record", f"{fastest_ball:.0f}<span style='font-size:20px'>mph</span>", "All-Time Max")
+        render_hero(c_h3, "Total Volume", f"{total_shots}", f"Across {total_sessions} Sessions")
+        render_hero(c_h4, "Favorite Club", f"{fav_club}", f"{fav_club_count} Shots Recorded")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # RECENT ACTIVITY CHART
+        st.subheader("📊 Recent Activity")
+        if not filtered_df.empty:
+            activity = filtered_df.groupby('Date').size().reset_index(name='Shots')
+            fig_act = px.bar(activity, x='Date', y='Shots', title="")
+            fig_act.update_traces(marker_color='#4DD0E1')
+            fig_act.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
+            st.plotly_chart(fig_act, use_container_width=True)
 
     # ================= TAB: MY BAG =================
     with tab_bag:
@@ -434,12 +496,6 @@ if not master_df.empty:
             play_alt = st.number_input("⛰️ Play Altitude (ft)", value=0, step=500, help="Adjust for course altitude.")
             alt_factor = 1 + (play_alt / 1000.0 * 0.011)
             if play_alt > 0: st.caption(f"Boost: +{((alt_factor-1)*100):.1f}%")
-
-        def get_smart_max(series, df_subset):
-            valid = df_subset.loc[series.index]
-            clean = valid[(valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) & (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)]
-            if clean.empty: return series.max()
-            return clean['SL_Carry'].max()
 
         bag_data = []
         for club in filtered_df['club'].unique():
@@ -488,6 +544,7 @@ if not master_df.empty:
             if len(subset) > 0:
                 is_scoring = any(x in str(selected_club).lower() for x in ['8','9','p','w','s','l','g'])
                 target_val = 5.0 + (handicap * 0.4) if is_scoring else 15.0 + (handicap * 0.8)
+                
                 lat_mean = subset['Lateral_Clean'].mean()
                 tendency_dir = "Right ➡️" if lat_mean > 0 else "Left ⬅️"
                 
@@ -646,6 +703,7 @@ if not master_df.empty:
                 data_a = club_data[club_data['SessionLabel'] == sess_a]
                 data_b = club_data[club_data['SessionLabel'] == sess_b]
                 
+                # Determine Winner
                 a_carry = data_a['Carry (yds)'].mean()
                 b_carry = data_b['Carry (yds)'].mean()
                 a_acc = data_a['Lateral_Clean'].abs().mean()
