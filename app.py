@@ -217,7 +217,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # --- DATA MANAGER (FIXED LOGIC) ---
+    # --- DATA MANAGER ---
     st.header("3. Data Manager")
     
     # IMPORT (ADD NEW)
@@ -238,7 +238,7 @@ with st.sidebar:
                 st.session_state['profiles'][active_user]['df'] = pd.concat([master_df, pd.concat(new_list)], ignore_index=True)
                 st.rerun()
 
-    # RESTORE / BACKUP (ALWAYS VISIBLE)
+    # RESTORE / BACKUP
     with st.expander("💾 Backup & Restore", expanded=True):
         # Restore
         db_restore = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key="restore_uploader")
@@ -313,7 +313,8 @@ if not master_df.empty:
     # 2. APPLY ENVIRONMENTAL FILTERS
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_limit].copy()
 
-    if remove_bad_shots:
+    # FIXED: Replaced 'remove_bad_shots' with correct variable 'outlier_mode'
+    if outlier_mode:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
@@ -511,7 +512,7 @@ if not master_df.empty:
         with st.expander("🎯 Strategy Circles"): st.write("Red circle = 95% Miss Pattern. Aim this away from trouble.")
 
 else:
-    # --- WELCOME SCREEN ---
+    # --- WELCOME SCREEN (RESTORED) ---
     st.markdown("""
     <div style="text-align: center; padding: 40px 0;">
         <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
