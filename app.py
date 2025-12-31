@@ -205,7 +205,6 @@ def get_smart_max(series, df_subset):
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
-    # SAFELY ACCESS SESSION STATE
     current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
@@ -231,6 +230,33 @@ def get_dynamic_ranges(club_name, handicap):
         spin = (s_base - 1000 - (tolerance*100), s_base + 1000 + (tolerance*100))
     return aoa, launch, spin
 
+def calculate_optimal_carry(club_speed, loft, benchmark="Scratch"):
+    """
+    Returns estimated CARRY distance based on club head speed and loft.
+    Uses an interpolation curve for 'Efficiency (Yards/MPH)' vs 'Loft'.
+    
+    Benchmark:
+    - 'Pro': Assumes ~1.50 max smash (decaying with loft) and optimized launch.
+    - 'Scratch': Assumes ~1.46 max smash (decaying with loft) and solid launch.
+    """
+    
+    # 1. Define Efficiency Curve (Yards Carry per MPH Club Speed)
+    # Data points: (Loft, Efficiency)
+    # Driver (10deg): Pro=2.75, Scratch=2.60
+    # 7 Iron (30deg): Pro=2.35, Scratch=2.25
+    # Wedge (50deg): Pro=2.00, Scratch=1.90
+    
+    if benchmark == "Tour Pro":
+        x_points = [0, 10, 20, 30, 40, 50, 60]
+        y_points = [2.90, 2.75, 2.55, 2.35, 2.15, 2.00, 1.70]
+    else: # Scratch / High Amateur
+        x_points = [0, 10, 20, 30, 40, 50, 60]
+        y_points = [2.75, 2.60, 2.45, 2.25, 2.05, 1.90, 1.60]
+        
+    efficiency_factor = np.interp(loft, x_points, y_points)
+    
+    return club_speed * efficiency_factor
+
 @st.cache_data
 def clean_mevo_data(df, filename, selected_date):
     df_clean = df[df['Shot'].astype(str).str.isdigit()].copy()
@@ -241,7 +267,6 @@ def clean_mevo_data(df, filename, selected_date):
     else:
         df_clean['Date'] = pd.to_datetime(selected_date)
     
-    # Vectorized Lateral Parsing
     if 'Lateral (yds)' in df_clean.columns:
         lat_str = df_clean['Lateral (yds)'].astype(str).str.upper()
         is_left = lat_str.str.contains('L')
@@ -269,7 +294,6 @@ def clean_mevo_data(df, filename, selected_date):
 
 @st.cache_data
 def filter_outliers(df):
-    # Vectorized physics filter
     mask_physics = (
         (df['Smash'] <= 1.58) & 
         (df['Smash'] >= 1.0) &
@@ -280,13 +304,12 @@ def filter_outliers(df):
     dropped_physics = len(df) - len(df_phys)
     
     if not df_phys.empty:
-        # Vectorized IQR filter
         groups = df_phys.groupby('club')['SL_Carry']
         Q1 = groups.transform(lambda x: x.quantile(0.25))
         Q3 = groups.transform(lambda x: x.quantile(0.75))
         IQR = Q3 - Q1
         mask_iqr = (df_phys['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_phys['SL_Carry'] <= (Q3 + 3.0 * IQR))
-        df_final = df_phys[mask_iqr].copy() # Explicit copy to avoid SettingWithCopyWarning
+        df_final = df_phys[mask_iqr].copy()
         
         dropped_stat = len(df_phys) - len(df_final)
         return df_final, dropped_physics + dropped_stat
@@ -435,7 +458,7 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        st.dataframe(bag_df, hide_index=True, height=200) # FIXED: Removed deprecated/invalid width
+        st.dataframe(bag_df, hide_index=True, height=200)
             
     # --- ENVIRONMENT CONFIG ---
     st.markdown("---")
@@ -488,14 +511,13 @@ if not master_df.empty:
     elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
     
-    # FIXED: Added .copy() to avoid SettingWithCopyWarning
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap].copy()
 
     if remove_bad_shots:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    # APPLY NORMALIZATION (Now safe from copy warning)
+    # APPLY NORMALIZATION
     filtered_df['Norm_Carry'] = filtered_df['SL_Carry'] * total_norm_factor
     filtered_df['Norm_Total'] = filtered_df['SL_Total'] * total_norm_factor
 
@@ -508,16 +530,12 @@ if not master_df.empty:
         total_sessions = filtered_df['Date'].nunique()
         
         driver_df = filtered_df[filtered_df['club'] == 'Driver']
-        longest_drive = 0
-        fastest_ball = 0
         if not driver_df.empty:
-            clean_driver = driver_df[
-                (driver_df['Smash'] <= 1.58) & (driver_df['Smash'] >= 1.0) &
-                (driver_df['Spin (rpm)'] > 500)
-            ]
-            if not clean_driver.empty:
-                longest_drive = clean_driver['Norm_Carry'].max()
-                fastest_ball = clean_driver['Ball (mph)'].max()
+            longest_drive = get_smart_max(driver_df['Norm_Carry'], driver_df)
+            fastest_ball = driver_df['Ball (mph)'].max()
+        else:
+            longest_drive = 0
+            fastest_ball = filtered_df['Ball (mph)'].max() if not filtered_df.empty else 0
             
         if not filtered_df.empty:
             fav_club = filtered_df['club'].mode()[0]
@@ -720,7 +738,6 @@ if not master_df.empty:
             st.plotly_chart(fig_tgt, use_container_width=True)
             
             st.caption("Detailed Shot Scoring:")
-            # FIXED: Removed deprecated width argument
             st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"))
         else:
             st.info("No shots found for this club in this session.")
@@ -767,6 +784,34 @@ if not master_df.empty:
 
             mech_data = filtered_df[filtered_df['club'] == mech_club]
             
+            # --- NEW EFFICIENCY LAB ---
+            if 'Club (mph)' in mech_data.columns and 'Norm_Carry' in mech_data.columns:
+                with st.expander("🚀 Swing Efficiency Lab", expanded=True):
+                    # Benchmark Selector
+                    eff_benchmark = st.radio("Benchmark Level:", ["Scratch / High Amateur", "Tour Pro"], horizontal=True)
+                    
+                    avg_speed = mech_data['Club (mph)'].mean()
+                    avg_carry = mech_data['Norm_Carry'].mean()
+                    
+                    # New Logic using interpolation
+                    potential = calculate_optimal_carry(avg_speed, curr_loft, eff_benchmark)
+                    efficiency_pct = (avg_carry / potential) * 100 if potential > 0 else 0
+                    
+                    e1, e2, e3 = st.columns(3)
+                    e1.metric("Your Club Speed", f"{avg_speed:.1f} mph")
+                    e2.metric("Potential Carry", f"{potential:.0f} yds", help=f"Optimal carry for {curr_loft}° loft at this speed ({eff_benchmark})")
+                    e3.metric("Efficiency Rating", f"{efficiency_pct:.0f}%", f"{avg_carry - potential:.0f} yds Gap")
+                    
+                    st.markdown(f"""
+                    <div class="eff-container">
+                        <div class="eff-bar-fill" style="width: {min(efficiency_pct, 100)}%;"></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if efficiency_pct < 85:
+                        st.info("💡 **Coach Tip:** Low efficiency. Check Launch Angle (too low?) or Spin (too high?).")
+
+            st.markdown("---")
             col_m1, col_m2, col_m3 = st.columns(3)
             # LOGIC INLINE TO PREVENT SCOPE ERRORS
             if 'AOA (°)' in mech_data.columns:
