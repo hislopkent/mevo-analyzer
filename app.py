@@ -189,6 +189,7 @@ master_df = st.session_state['profiles'][active_user]['df']
 my_bag = st.session_state['profiles'][active_user]['bag']
 
 # --- 2. HELPERS ---
+
 def get_smart_max(series, df_subset):
     """Calculates max value filtering out physics-defying outliers."""
     valid = df_subset.loc[series.index]
@@ -204,6 +205,7 @@ def get_smart_max(series, df_subset):
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
+    # SAFELY ACCESS SESSION STATE
     current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
@@ -239,6 +241,7 @@ def clean_mevo_data(df, filename, selected_date):
     else:
         df_clean['Date'] = pd.to_datetime(selected_date)
     
+    # Vectorized Lateral Parsing
     if 'Lateral (yds)' in df_clean.columns:
         lat_str = df_clean['Lateral (yds)'].astype(str).str.upper()
         is_left = lat_str.str.contains('L')
@@ -266,8 +269,7 @@ def clean_mevo_data(df, filename, selected_date):
 
 @st.cache_data
 def filter_outliers(df):
-    df_filtered = pd.DataFrame()
-    outlier_count = 0
+    # Vectorized physics filter
     mask_physics = (
         (df['Smash'] <= 1.58) & 
         (df['Smash'] >= 1.0) &
@@ -278,12 +280,13 @@ def filter_outliers(df):
     dropped_physics = len(df) - len(df_phys)
     
     if not df_phys.empty:
+        # Vectorized IQR filter
         groups = df_phys.groupby('club')['SL_Carry']
         Q1 = groups.transform(lambda x: x.quantile(0.25))
         Q3 = groups.transform(lambda x: x.quantile(0.75))
         IQR = Q3 - Q1
         mask_iqr = (df_phys['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_phys['SL_Carry'] <= (Q3 + 3.0 * IQR))
-        df_final = df_phys[mask_iqr]
+        df_final = df_phys[mask_iqr].copy() # Explicit copy to avoid SettingWithCopyWarning
         
         dropped_stat = len(df_phys) - len(df_final)
         return df_final, dropped_physics + dropped_stat
@@ -432,7 +435,7 @@ with st.sidebar:
         bag_df = pd.DataFrame(list(my_bag.items()), columns=['Club', 'Loft'])
         bag_df['SortIndex'] = bag_df['Club'].apply(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
         bag_df = bag_df.sort_values('SortIndex').drop(columns=['SortIndex'])
-        st.dataframe(bag_df, hide_index=True, height=200) # FIXED: Removed width completely
+        st.dataframe(bag_df, hide_index=True, height=200) # FIXED: Removed deprecated/invalid width
             
     # --- ENVIRONMENT CONFIG ---
     st.markdown("---")
@@ -485,13 +488,14 @@ if not master_df.empty:
     elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
     
-    filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap]
+    # FIXED: Added .copy() to avoid SettingWithCopyWarning
+    filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap].copy()
 
     if remove_bad_shots:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    # APPLY NORMALIZATION
+    # APPLY NORMALIZATION (Now safe from copy warning)
     filtered_df['Norm_Carry'] = filtered_df['SL_Carry'] * total_norm_factor
     filtered_df['Norm_Total'] = filtered_df['SL_Total'] * total_norm_factor
 
@@ -504,12 +508,16 @@ if not master_df.empty:
         total_sessions = filtered_df['Date'].nunique()
         
         driver_df = filtered_df[filtered_df['club'] == 'Driver']
+        longest_drive = 0
+        fastest_ball = 0
         if not driver_df.empty:
-            longest_drive = get_smart_max(driver_df['Norm_Carry'], driver_df)
-            fastest_ball = driver_df['Ball (mph)'].max()
-        else:
-            longest_drive = 0
-            fastest_ball = filtered_df['Ball (mph)'].max() if not filtered_df.empty else 0
+            clean_driver = driver_df[
+                (driver_df['Smash'] <= 1.58) & (driver_df['Smash'] >= 1.0) &
+                (driver_df['Spin (rpm)'] > 500)
+            ]
+            if not clean_driver.empty:
+                longest_drive = clean_driver['Norm_Carry'].max()
+                fastest_ball = clean_driver['Ball (mph)'].max()
             
         if not filtered_df.empty:
             fav_club = filtered_df['club'].mode()[0]
@@ -539,37 +547,44 @@ if not master_df.empty:
     # ================= TAB: MY BAG =================
     with tab_bag:
         st.subheader(f"🎒 My Bag & Yardages (Normalized to {sim_temp}°F)")
-        bag_data = []
-        for club in filtered_df['club'].unique():
-            subset = filtered_df[filtered_df['club'] == club]
-            s_max = get_smart_max(subset['Norm_Carry'], subset)
-            
-            p20 = subset['Norm_Carry'].quantile(0.20)
-            p80 = subset['Norm_Carry'].quantile(0.80)
-            
-            bag_data.append({
-                'Club': club, 'Norm_Carry': subset['Norm_Carry'].mean(), 'Norm_Total': subset['Norm_Total'].mean(),
-                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset),
-                'Range_Min': p20, 'Range_Max': p80
-            })
         
-        bag_stats = pd.DataFrame(bag_data).set_index('Club')
-        bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
-        bag_stats = bag_stats.sort_values('SortIndex')
+        stats = filtered_df.groupby('club').agg({
+            'Norm_Carry': 'mean',
+            'Norm_Total': 'mean',
+            'Ball (mph)': 'mean',
+            'club': 'count'
+        }).rename(columns={'club': 'Count'})
+        
+        ranges = filtered_df.groupby('club')['Norm_Carry'].quantile([0.20, 0.80]).unstack()
+        
+        valid_max_df = filtered_df[
+            (filtered_df['Smash'].between(1.0, 1.58)) & 
+            (filtered_df['Spin (rpm)'] > 500) & 
+            (filtered_df['Height (ft)'] > 8)
+        ]
+        if not valid_max_df.empty:
+            smart_maxes = valid_max_df.groupby('club')['Norm_Carry'].max()
+        else:
+            smart_maxes = pd.Series(dtype=float)
+            
+        bag_view = stats.join(ranges).join(smart_maxes.rename("Max Carry"))
+        bag_view['SortIndex'] = bag_view.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_view = bag_view.sort_values('SortIndex')
         
         st.write("---")
         cols = st.columns(4)
-        for i, (index, row) in enumerate(bag_stats.iterrows()):
+        for i, (club_name, row) in enumerate(bag_view.iterrows()):
             with cols[i % 4]:
+                s_max = row['Max Carry'] if not pd.isna(row['Max Carry']) else row['Norm_Carry']
                 st.markdown(f"""
                 <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
-                    <h3 style="margin:0; color: #4DD0E1;">{index}</h3>
+                    <h3 style="margin:0; color: #4DD0E1;">{club_name}</h3>
                     <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
-                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row['Range_Min']:.0f} - {row['Range_Max']:.0f}</div>
+                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row[0.2]:.0f} - {row[0.8]:.0f}</div>
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
-                        <span>Speed: {row['Ball Speed']:.0f}</span>
-                        <span style="color: #FFD700;">Pot: {row['Max Carry']:.0f}</span>
+                        <span>Speed: {row['Ball (mph)']:.0f}</span>
+                        <span style="color: #FFD700;">Pot: {s_max:.0f}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -705,6 +720,7 @@ if not master_df.empty:
             st.plotly_chart(fig_tgt, use_container_width=True)
             
             st.caption("Detailed Shot Scoring:")
+            # FIXED: Removed deprecated width argument
             st.dataframe(target_subset[['Score', 'Norm_Carry', 'Lateral_Clean', 'Dist_Err', 'Lat_Err']].sort_values('Score', ascending=False).style.format("{:.1f}"))
         else:
             st.info("No shots found for this club in this session.")
