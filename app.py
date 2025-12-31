@@ -301,6 +301,11 @@ with st.sidebar:
     # --- SETTINGS ---
     st.markdown("---")
     with st.expander("⚙️ Settings & Normalization"):
+        # RESTORED MISSING INPUTS HERE
+        env_mode = st.radio("Filter Mode:", ["All", "Outdoor Only", "Indoor Only"], index=0)
+        handicap = st.number_input("Handicap", 0, 54, 15)
+        
+        st.markdown("---")
         st.caption("Normalization")
         temp = st.slider("Temp (°F)", 30, 110, 75)
         alt = st.number_input("Altitude (ft)", 0, 10000, 0, 500)
@@ -349,9 +354,13 @@ if not master_df.empty:
         st.stop()
 
     # 2. APPLY ENVIRONMENTAL FILTERS
+    if env_mode == "Outdoor Only" and 'Mode' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Mode'].str.contains("Outdoor", case=False, na=False)]
+    elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
+    
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_limit].copy()
 
-    # CORRECTLY CALLED FUNCTION NAME
     if outlier_mode:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
