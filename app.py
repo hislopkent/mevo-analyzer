@@ -26,7 +26,24 @@ st.markdown("""
         background-color: #262730 !important; color: #FAFAFA !important; border: 1px solid #444 !important;
     }
 
-    /* 3. METRIC CARDS */
+    /* 3. IMPROVED EXPANDERS */
+    div[data-testid="stExpander"] {
+        background-color: #262730 !important;
+        border: 1px solid #444 !important;
+        border-radius: 8px !important;
+        margin-bottom: 12px !important;
+    }
+    div[data-testid="stExpander"] summary p {
+        color: #FAFAFA !important;
+        font-weight: 600 !important;
+        font-size: 15px !important;
+    }
+    div[data-testid="stExpander"] summary svg {
+        fill: #FAFAFA !important;
+        color: #FAFAFA !important;
+    }
+
+    /* 4. METRIC CARDS */
     .metric-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border: 1px solid #444;
@@ -39,7 +56,7 @@ st.markdown("""
     .metric-lbl { font-size: 13px; text-transform: uppercase; color: #B0B3B8; letter-spacing: 1px; }
     .metric-sub { font-size: 11px; color: #FF4081; margin-top: 4px; }
 
-    /* 4. DASHBOARD CARDS (Hero) */
+    /* 5. HERO CARDS */
     .hero-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border-radius: 15px;
@@ -55,14 +72,13 @@ st.markdown("""
     .hero-metric { font-size: 36px; font-weight: 800; color: #FAFAFA; margin: 0; }
     .hero-sub { font-size: 12px; color: #00E5FF; margin-top: 5px; }
 
-    /* 5. TABS & GENERAL */
+    /* 6. GENERAL UI */
     div[data-testid="stTabs"] button[aria-selected="false"] { color: #B0B3B8 !important; }
     div[data-testid="stTabs"] button[aria-selected="true"] { color: #FAFAFA !important; border-top-color: #4DD0E1 !important; }
-    div[data-testid="stExpander"] { background-color: #1E222B !important; border: 1px solid #444; }
     div[data-testid="stMetricLabel"] label { color: #B0B3B8 !important; }
     div[data-testid="stMetricValue"] { color: #4DD0E1 !important; }
     
-    /* 6. EFFICIENCY BAR */
+    /* 7. EFFICIENCY BAR */
     .eff-container { background-color: #333; border-radius: 10px; padding: 5px; margin-top: 10px; }
     .eff-bar-fill { height: 10px; background: linear-gradient(90deg, #FF4081, #00E5FF); border-radius: 5px; }
 </style>
@@ -87,7 +103,7 @@ active_user = st.session_state['active_user']
 master_df = st.session_state['profiles'][active_user]['df']
 my_bag = st.session_state['profiles'][active_user]['bag']
 
-# --- 2. PHYSICS & HELPER FUNCTIONS ---
+# --- 2. HELPERS ---
 
 def calculate_optimal_carry(club_speed, loft, benchmark="Scratch"):
     if benchmark == "Tour Pro":
@@ -139,23 +155,34 @@ def clean_mevo_data(df, filename, selected_date):
     return df_clean
 
 @st.cache_data
-def filter_dataset(df, mode, smash_limit):
-    mask = (
-        (df['Smash'] <= 1.58) & (df['Smash'] >= 1.0) &
-        (df['Spin (rpm)'] > 500) & (df['Height (ft)'] > 5) &
-        (df['Smash'] <= smash_limit)
+def filter_outliers(df):
+    """
+    Filters outliers based on Physics and IQR.
+    Returns: (Cleaned DataFrame, Count of dropped rows)
+    """
+    # 1. Physics Check
+    mask_physics = (
+        (df['Smash'] >= 1.0) & 
+        (df['Smash'] <= 1.58) &
+        (df['Spin (rpm)'] > 500) & 
+        (df['Height (ft)'] > 5)
     )
-    df_clean = df[mask].copy()
+    df_phys = df[mask_physics].copy()
+    dropped_physics = len(df) - len(df_phys)
     
-    if not df_clean.empty and mode == "Auto-Clean":
-        groups = df_clean.groupby('club')['SL_Carry']
+    if not df_phys.empty:
+        # 2. IQR Check
+        groups = df_phys.groupby('club')['SL_Carry']
         Q1 = groups.transform(lambda x: x.quantile(0.25))
         Q3 = groups.transform(lambda x: x.quantile(0.75))
         IQR = Q3 - Q1
-        mask_iqr = (df_clean['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_clean['SL_Carry'] <= (Q3 + 3.0 * IQR))
-        df_clean = df_clean[mask_iqr].copy()
+        mask_iqr = (df_phys['SL_Carry'] >= (Q1 - 1.5 * IQR)) & (df_phys['SL_Carry'] <= (Q3 + 3.0 * IQR))
+        df_final = df_phys[mask_iqr].copy()
         
-    return df_clean
+        dropped_stat = len(df_phys) - len(df_final)
+        return df_final, dropped_physics + dropped_stat
+    else:
+        return df_phys, dropped_physics
 
 def check_range(club_name, value, metric_idx, handicap):
     current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
@@ -188,6 +215,17 @@ def get_coach_tip(metric_name, status, club):
     if metric_name == "Launch": return "Launch is off. Check ball position or if you are scooping/delofting."
     if metric_name == "Spin": return "Spin is suboptimal. Check impact location (high/low on face)."
     return None
+
+def calculate_sg_off_tee(row):
+    dist_remaining = 400 - row['Norm_Total']
+    if dist_remaining < 0: dist_remaining = 10
+    abs_lat = abs(row['Lateral_Clean'])
+    if abs_lat < 15: lie_penalty = 0 
+    elif abs_lat < 30: lie_penalty = 0.3 
+    else: lie_penalty = 1.1 
+    strokes_from_dist = (dist_remaining / 100) + 2.0 
+    sg = 4.10 - (1 + strokes_from_dist + lie_penalty)
+    return sg
 
 # --- 3. SIDEBAR ---
 with st.sidebar:
@@ -239,7 +277,7 @@ with st.sidebar:
                 st.rerun()
 
     # RESTORE / BACKUP
-    with st.expander("💾 Backup & Restore", expanded=True):
+    with st.expander("💾 Backup & Restore"):
         # Restore
         db_restore = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key="restore_uploader")
         if db_restore:
@@ -313,13 +351,12 @@ if not master_df.empty:
     # 2. APPLY ENVIRONMENTAL FILTERS
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_limit].copy()
 
-    # FIXED: Replaced 'remove_bad_shots' with correct variable 'outlier_mode'
+    # CORRECTLY CALLED FUNCTION NAME
     if outlier_mode:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
     # 3. APPLY NORMALIZATION
-    # Calculate factors
     t_fac = 1 + ((temp - 70) * 0.001)
     a_fac = 1 + (alt / 1000.0 * 0.011)
     b_fac = {"Premium (100%)":1.0, "Economy (98%)":0.98, "Range (90%)":0.90}[ball]
