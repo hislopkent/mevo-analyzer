@@ -31,14 +31,47 @@ except Exception as e:
     st.error(f"Failed to connect to Database: {e}")
     st.stop()
 
-# --- CSS STYLING ---
+# --- CSS STYLING (THEME ENFORCER) ---
 st.markdown("""
 <style>
-    /* 1. FORCE DARK MODE TEXT */
+    /* 1. GLOBAL TEXT & BACKGROUND */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
-    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown { color: #FAFAFA !important; }
+    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, .stText { color: #FAFAFA !important; }
     
-    /* 2. FIX BUTTONS */
+    /* 2. FIX TABS (Invisible Text Fix) */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #1E222B;
+        border-radius: 4px 4px 0px 0px;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        color: #FAFAFA; /* Unselected Tab Text */
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #262730;
+        color: #4DD0E1 !important; /* Selected Tab Text */
+        border-bottom: 2px solid #4DD0E1;
+    }
+
+    /* 3. FIX INPUT FIELDS (White on White Fix) */
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] div {
+        color: #FAFAFA !important;
+        background-color: #262730 !important;
+        border-color: #444 !important;
+    }
+    .stSelectbox svg { fill: #FAFAFA !important; }
+    
+    /* 4. FIX EXPANDERS */
+    .streamlit-expanderHeader {
+        background-color: #262730 !important;
+        color: #FAFAFA !important;
+        border-radius: 5px;
+    }
+    
+    /* 5. FIX BUTTONS */
     .stButton > button {
         background-color: #262730;
         color: #FAFAFA !important;
@@ -52,19 +85,7 @@ st.markdown("""
         border-color: #4DD0E1;
     }
     
-    /* 3. FIX INPUT FIELDS */
-    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input, [data-testid="stSelectbox"] {
-        color: #FAFAFA !important;
-        background-color: #262730 !important; 
-    }
-    
-    /* 4. SIDEBAR STYLING */
-    section[data-testid="stSidebar"] {
-        background-color: #12151d;
-        border-right: 1px solid #333;
-    }
-    
-    /* 5. METRIC CARDS */
+    /* 6. METRIC CARDS */
     .hero-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border-radius: 15px;
@@ -73,6 +94,11 @@ st.markdown("""
         border: 1px solid #444;
         box-shadow: 0 4px 10px rgba(0,0,0,0.3);
     }
+    .hero-metric { font-size: 36px; font-weight: 800; color: #FAFAFA; margin: 0; }
+    .hero-title { font-size: 14px; text-transform: uppercase; color: #B0B3B8; margin-bottom: 10px; }
+    .hero-sub { font-size: 12px; color: #00E5FF; margin-top: 5px; }
+
+    /* 7. PROGRESS BARS */
     .eff-container { background-color: #111; border-radius: 10px; padding: 4px; margin-top: 10px; border: 1px solid #333; }
     .eff-bar-fill { height: 12px; background: linear-gradient(90deg, #FF4081, #00E5FF); border-radius: 6px; }
 </style>
@@ -169,7 +195,6 @@ def save_bag_loft(user_id, club, loft):
 def rename_session(user_id, old_name, new_name):
     try:
         with engine.connect() as conn:
-            # Use quotes for "Session" because it is a reserved keyword in some SQL dialects or case sensitive
             sql = text('UPDATE shots SET "Session" = :new WHERE "Session" = :old AND user_id = :uid')
             result = conn.execute(sql, {"new": new_name, "old": old_name, "uid": user_id})
             conn.commit()
@@ -356,10 +381,7 @@ with st.sidebar:
     # MANAGE SESSIONS TAB (RENAME / DELETE)
     with st.expander("✏️ Manage Sessions"):
         if not master_df.empty:
-            # Get unique session names
             sessions = sorted(master_df['Session'].unique(), reverse=True)
-            
-            # Sub-tabs for neatness
             man_tab1, man_tab2 = st.tabs(["Rename", "Delete"])
             
             with man_tab1:
@@ -439,6 +461,9 @@ if not master_df.empty:
     if date_filter == "Last Session": df_f = df_f[df_f['Session'] == df_f['Session'].unique()[0]] # Assumes sorted load? Better to use date
     elif date_filter == "Last 3 Sessions": df_f = df_f[df_f['Session'].isin(df_f['Session'].unique()[:3])]
     elif date_filter == "Last 5 Sessions": df_f = df_f[df_f['Session'].isin(df_f['Session'].unique()[:5])]
+    elif date_filter == "Last 30 Days": df_f = df_f[df_f['Date'] >= (pd.Timestamp.now() - timedelta(days=30))]
+    elif date_filter == "Year to Date": df_f = df_f[df_f['Date'] >= pd.Timestamp(pd.Timestamp.now().year, 1, 1)]
+
     # Note: Using Session ID sort is safer than Date for uniqueness if multi-session same day
     
     if env_mode == "Outdoor Only" and 'Mode' in df_f.columns: df_f = df_f[df_f['Mode'].str.contains("Outdoor", case=False, na=False)]
