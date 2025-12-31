@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import timedelta
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="FS Pro Strategy & Analytics", layout="wide", page_icon="⛳")
+st.set_page_config(page_title="Homegrown FS Pro Analytics", layout="wide", page_icon="⛳")
 
 # Custom CSS
 st.markdown("""
@@ -26,7 +26,7 @@ st.markdown("""
         background-color: #262730 !important; color: #FAFAFA !important; border: 1px solid #444 !important;
     }
 
-    /* 3. METRIC CARDS (DECADE STYLE) */
+    /* 3. METRIC CARDS */
     .metric-card {
         background: linear-gradient(145deg, #1E222B, #262730);
         border: 1px solid #444;
@@ -39,16 +39,32 @@ st.markdown("""
     .metric-lbl { font-size: 13px; text-transform: uppercase; color: #B0B3B8; letter-spacing: 1px; }
     .metric-sub { font-size: 11px; color: #FF4081; margin-top: 4px; }
 
-    /* 4. TABS & GENERAL */
+    /* 4. DASHBOARD CARDS (Hero) */
+    .hero-card {
+        background: linear-gradient(145deg, #1E222B, #262730);
+        border-radius: 15px;
+        padding: 20px;
+        text-align: center;
+        border: 1px solid #444;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        height: 100%;
+        transition: transform 0.2s;
+    }
+    .hero-card:hover { transform: translateY(-5px); border-color: #4DD0E1; }
+    .hero-title { font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; color: #B0B3B8; margin-bottom: 10px; }
+    .hero-metric { font-size: 36px; font-weight: 800; color: #FAFAFA; margin: 0; }
+    .hero-sub { font-size: 12px; color: #00E5FF; margin-top: 5px; }
+
+    /* 5. TABS & GENERAL */
     div[data-testid="stTabs"] button[aria-selected="false"] { color: #B0B3B8 !important; }
     div[data-testid="stTabs"] button[aria-selected="true"] { color: #FAFAFA !important; border-top-color: #4DD0E1 !important; }
     div[data-testid="stExpander"] { background-color: #1E222B !important; border: 1px solid #444; }
     div[data-testid="stMetricLabel"] label { color: #B0B3B8 !important; }
     div[data-testid="stMetricValue"] { color: #4DD0E1 !important; }
     
-    /* 5. EFFICIENCY BAR */
-    .eff-bg { background-color: #333; border-radius: 6px; height: 12px; width: 100%; margin-top: 8px; overflow: hidden; }
-    .eff-fill { height: 100%; border-radius: 6px; transition: width 0.5s; }
+    /* 6. EFFICIENCY BAR */
+    .eff-container { background-color: #333; border-radius: 10px; padding: 5px; margin-top: 10px; }
+    .eff-bar-fill { height: 10px; background: linear-gradient(90deg, #FF4081, #00E5FF); border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,26 +89,26 @@ my_bag = st.session_state['profiles'][active_user]['bag']
 
 # --- 2. PHYSICS & HELPER FUNCTIONS ---
 
-def calculate_optimal_carry(club_speed, loft):
+def calculate_optimal_carry(club_speed, loft, benchmark="Scratch"):
     """
-    Revised Physics Engine v2.0
-    Based on realistic "Tour Average" efficiency, not theoretical max.
-    This prevents '110% Efficiency' oddities.
+    Interpolated Efficiency Curve (Yards/MPH vs Loft).
     """
-    # Efficiency Curve: Yards Carry per MPH of Club Speed vs Loft
-    # Driver (10 deg) -> ~2.75 yds/mph
-    # 7 Iron (34 deg) -> ~2.35 yds/mph
-    # LW (58 deg)     -> ~1.60 yds/mph
-    
-    x_lofts = [9, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
-    y_eff   = [2.75, 2.65, 2.55, 2.48, 2.40, 2.32, 2.20, 2.05, 1.85, 1.65, 1.50]
-    
-    efficiency_factor = np.interp(loft, x_lofts, y_eff)
-    
-    # Cap Smash Factor Physics (Prevent sensor noise from inflating potential)
-    # E.g. A 1.52 smash on a wedge is impossible. We assume a "Clean Strike" smash based on loft.
-    
+    if benchmark == "Tour Pro":
+        x_points = [9, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+        y_points = [2.90, 2.75, 2.60, 2.50, 2.40, 2.30, 2.20, 2.10, 2.00, 1.85, 1.70]
+    else: # Scratch / High Amateur (Realistic)
+        x_points = [9, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+        y_points = [2.75, 2.65, 2.55, 2.48, 2.40, 2.32, 2.20, 2.05, 1.85, 1.65, 1.50]
+        
+    efficiency_factor = np.interp(loft, x_points, y_points)
     return club_speed * efficiency_factor
+
+def get_smart_max(series, df_subset):
+    valid = df_subset.loc[series.index]
+    clean = valid[(valid['Smash'] <= 1.58) & (valid['Smash'] >= 1.0) & (valid['Spin (rpm)'] > 500) & (valid['Height (ft)'] > 8)]
+    if clean.empty: return series.max()
+    col_to_use = 'Norm_Carry' if 'Norm_Carry' in clean.columns else 'SL_Carry'
+    return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 @st.cache_data
 def clean_mevo_data(df, filename, selected_date):
@@ -154,6 +170,47 @@ def filter_dataset(df, mode, smash_limit):
         
     return df_clean
 
+def check_range(club_name, value, metric_idx, handicap):
+    # Retrieve current bag from session state safely
+    current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
+    c_lower = str(club_name).lower()
+    user_loft = current_bag.get(club_name, 30.0)
+    tolerance = handicap * 0.1
+    launch_help = 0 if handicap < 5 else (1.0 if handicap < 15 else 2.0)
+
+    # Simplified Dynamic Ranges
+    if 'driver' in c_lower:
+        aoa = (-2.0, 5.0) 
+        launch = (10.0 + launch_help, 16.0 + launch_help)
+        spin = (1800, 2800)
+    elif 'wood' in c_lower or 'hybrid' in c_lower:
+        aoa = (-4.0, 1.0)
+        launch = (user_loft * 0.7 - 2.0, user_loft * 0.7 + 2.0)
+        spin = (user_loft * 180, user_loft * 250)
+    else:
+        # Irons
+        aoa = (-6.0, -1.0)
+        launch = (user_loft * 0.5 - 2.0, user_loft * 0.5 + 2.0)
+        spin = (user_loft * 180, user_loft * 220)
+        
+    ranges = [aoa, launch, spin]
+    min_v, max_v = ranges[metric_idx]
+    
+    if min_v <= value <= max_v: return "Optimal ✅", "normal"
+    elif value < min_v: return f"{value - min_v:.1f} (Low) ⚠️", "inverse"
+    else: return f"+{value - max_v:.1f} (High) ⚠️", "inverse"
+
+def get_coach_tip(metric_name, status, club):
+    if "Optimal" in status: return None
+    is_driver = "driver" in str(club).lower()
+    if metric_name == "AoA":
+        if "Low" in status and is_driver: return "To hit up on Driver, try tilting your trailing shoulder down at address."
+        if "High" in status and not is_driver: return "To hit down on irons, ensure your weight shifts to the lead side before impact."
+    if metric_name == "Launch":
+        if "Low" in status: return "Launch is low. Check ball position (move forward) or if you are delofting the club."
+        if "High" in status: return "Launch is high. You might be scooping. Try to keep hands ahead of the ball."
+    return None
+
 # --- 3. SIDEBAR ---
 with st.sidebar:
     st.header("1. User Profile")
@@ -169,14 +226,18 @@ with st.sidebar:
             st.session_state['profiles'][new_name] = st.session_state['profiles'].pop(active_user)
             st.session_state['active_user'] = new_name
             st.rerun()
+        new_prof_create = st.text_input("New Profile:", key="new_prof_create")
+        if st.button("➕ Create"):
+            st.session_state['profiles'][new_prof_create] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
+            st.rerun()
     
     st.markdown("---")
     
     # --- DATE FILTERING (NEW) ---
-    st.header("2. Timeframe Analysis")
+    st.header("2. Timeframe")
     date_filter = st.selectbox(
         "Select Range:", 
-        ["All Time", "Last Session", "Last 3 Sessions", "Last 5 Sessions", "Last 30 Days", "Last 90 Days", "Year to Date"]
+        ["All Time", "Last Session", "Last 3 Sessions", "Last 5 Sessions", "Last 30 Days", "Year to Date"]
     )
     
     st.markdown("---")
@@ -201,6 +262,11 @@ with st.sidebar:
         
         if not master_df.empty:
             st.download_button("💾 Backup Data", master_df.to_csv(index=False), f"{active_user}_db.csv")
+            db_restore = st.file_uploader("Restore Backup", type='csv')
+            if db_restore and st.button("🔄 Restore"):
+                restored = pd.read_csv(db_restore)
+                st.session_state['profiles'][active_user]['df'] = restored
+                st.rerun()
             if st.button("🗑️ Reset All"):
                 st.session_state['profiles'][active_user]['df'] = pd.DataFrame()
                 st.rerun()
@@ -216,33 +282,40 @@ with st.sidebar:
         st.caption("Filters")
         smash_limit = st.slider("Max Smash Cap", 1.40, 1.60, 1.52)
         outlier_mode = st.checkbox("Auto-Clean Outliers", True)
+        
+    # --- MY BAG CONFIG (Mini) ---
+    with st.expander("🎒 Bag Setup"):
+        club_sel = st.selectbox("Club", CLUB_SORT_ORDER)
+        curr_loft = my_bag.get(club_sel, 30.0)
+        new_loft = st.number_input(f"{club_sel} Loft", value=float(curr_loft), step=0.5)
+        if st.button("Save Loft"):
+            st.session_state['profiles'][active_user]['bag'][club_sel] = new_loft
+            st.toast("Saved!")
 
 # --- 4. MAIN LOGIC ---
 if not master_df.empty:
-    st.title(f"⛳ Strategy Lab: {active_user}")
+    st.title(f"⛳ Analytics: {active_user}")
     
     # 1. APPLY DATE FILTER
     df_view = master_df.copy()
-    df_view['Date'] = pd.to_datetime(df_view['Date'])
-    
-    if date_filter == "Last Session":
-        last_date = df_view['Date'].max()
-        df_view = df_view[df_view['Date'] == last_date]
-    elif date_filter == "Last 3 Sessions":
-        dates = sorted(df_view['Date'].unique(), reverse=True)[:3]
-        df_view = df_view[df_view['Date'].isin(dates)]
-    elif date_filter == "Last 5 Sessions":
-        dates = sorted(df_view['Date'].unique(), reverse=True)[:5]
-        df_view = df_view[df_view['Date'].isin(dates)]
-    elif date_filter == "Last 30 Days":
-        cutoff = pd.Timestamp.now() - timedelta(days=30)
-        df_view = df_view[df_view['Date'] >= cutoff]
-    elif date_filter == "Last 90 Days":
-        cutoff = pd.Timestamp.now() - timedelta(days=90)
-        df_view = df_view[df_view['Date'] >= cutoff]
-    elif date_filter == "Year to Date":
-        cutoff = pd.Timestamp(pd.Timestamp.now().year, 1, 1)
-        df_view = df_view[df_view['Date'] >= cutoff]
+    if 'Date' in df_view.columns:
+        df_view['Date'] = pd.to_datetime(df_view['Date'])
+        
+        if date_filter == "Last Session":
+            last_date = df_view['Date'].max()
+            df_view = df_view[df_view['Date'] == last_date]
+        elif date_filter == "Last 3 Sessions":
+            dates = sorted(df_view['Date'].unique(), reverse=True)[:3]
+            df_view = df_view[df_view['Date'].isin(dates)]
+        elif date_filter == "Last 5 Sessions":
+            dates = sorted(df_view['Date'].unique(), reverse=True)[:5]
+            df_view = df_view[df_view['Date'].isin(dates)]
+        elif date_filter == "Last 30 Days":
+            cutoff = pd.Timestamp.now() - timedelta(days=30)
+            df_view = df_view[df_view['Date'] >= cutoff]
+        elif date_filter == "Year to Date":
+            cutoff = pd.Timestamp(pd.Timestamp.now().year, 1, 1)
+            df_view = df_view[df_view['Date'] >= cutoff]
 
     if df_view.empty:
         st.warning(f"No data found for filter: {date_filter}")
@@ -262,7 +335,7 @@ if not master_df.empty:
     df_view['Norm_Total'] = df_view['SL_Total'] * total_fac
 
     # TABS
-    tabs = st.tabs(["🏠 Dashboard", "🎯 Accuracy & Dispersion", "🚀 Efficiency Lab", "🎒 Bag Gapping", "📈 Trends", "❓ FAQ"])
+    tabs = st.tabs(["🏠 Dashboard", "🎒 My Bag", "🎯 Accuracy", "📈 Trends", "🔬 Mechanics", "⚔️ Compare", "❓ FAQ"])
 
     # --- TAB 1: DASHBOARD ---
     with tabs[0]:
@@ -275,37 +348,66 @@ if not master_df.empty:
         
         # Best Drive (in this period)
         drivs = df_view[df_view['club']=='Driver']
-        best_drive = drivs['Norm_Carry'].max() if not drivs.empty else 0
+        best_drive = get_smart_max(drivs['Norm_Carry'], drivs) if not drivs.empty else 0
         
         c1, c2, c3, c4 = st.columns(4)
-        def metric_box(col, label, val, sub):
-            col.markdown(f"""
-            <div class="metric-card">
-                <p class="metric-lbl">{label}</p>
-                <p class="metric-val">{val}</p>
-                <p class="metric-sub">{sub}</p>
-            </div>
-            """, unsafe_allow_html=True)
+        def render_hero(col, title, value, sub):
+            col.markdown(f"""<div class="hero-card"><div class="hero-title">{title}</div><div class="hero-metric">{value}</div><div class="hero-sub">{sub}</div></div>""", unsafe_allow_html=True)
             
-        metric_box(c1, "Volume", tot, f"{sess} Sessions")
-        metric_box(c2, "Best Drive", f"{best_drive:.0f}y", f"Normalized @ {temp}°F")
-        metric_box(c3, "Favorite Club", fav, "Most Swings")
+        render_hero(c1, "Volume", tot, f"{sess} Sessions")
+        render_hero(c2, "Best Drive", f"{best_drive:.0f}y", f"Normalized @ {temp}°F")
+        render_hero(c3, "Favorite Club", fav, "Most Swings")
         
         # Dispersion Metric (DECADE style - Average 7i lateral error)
         i7 = df_view[df_view['club'] == '7 Iron']
         if not i7.empty:
             disp = i7['Lateral_Clean'].std() * 2 # 2 std devs = 95% confidence width
-            metric_box(c4, "7-Iron Dispersion", f"±{disp:.1f}y", "95% Confidence Width")
+            render_hero(c4, "7-Iron Dispersion", f"±{disp:.1f}y", "95% Confidence Width")
         else:
-            metric_box(c4, "7-Iron Dispersion", "-", "No Data")
+            render_hero(c4, "7-Iron Dispersion", "-", "No Data")
 
-    # --- TAB 2: ACCURACY (DECADE STYLE) ---
+    # --- TAB 2: MY BAG ---
     with tabs[1]:
-        st.subheader("🎯 Shotgun Patterns & Dispersion")
-        st.caption("This view helps you understand your 'Cone of Error' (DECADE Method). Aim for the center of your shotgun pattern, not the flag.")
+        st.subheader("🎒 Stock Yardages (Normalized)")
         
+        # Aggregation
+        stats = df_view.groupby('club').agg({
+            'Norm_Carry': 'mean',
+            'Norm_Total': 'mean',
+            'Ball (mph)': 'mean',
+            'club': 'count'
+        }).rename(columns={'club': 'Count'})
+        
+        # Ranges
+        ranges = df_view.groupby('club')['Norm_Carry'].quantile([0.20, 0.80]).unstack()
+        
+        # Join
+        bag_view = stats.join(ranges)
+        bag_view['SortIndex'] = bag_view.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_view = bag_view.sort_values('SortIndex')
+        
+        st.write("---")
+        cols = st.columns(4)
+        for i, (club_name, row) in enumerate(bag_view.iterrows()):
+            with cols[i % 4]:
+                st.markdown(f"""
+                <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
+                    <h3 style="margin:0; color: #4DD0E1;">{club_name}</h3>
+                    <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
+                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row[0.2]:.0f} - {row[0.8]:.0f}</div>
+                    <hr style="border-color: #444; margin: 8px 0;">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
+                        <span>Speed: {row['Ball (mph)']:.0f}</span>
+                        <span style="color: #FFD700;">Tot: {row['Norm_Total']:.0f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # --- TAB 3: ACCURACY (DECADE STYLE) ---
+    with tabs[2]:
+        st.subheader("🎯 Accuracy & Dispersion Analysis")
         avail = [c for c in CLUB_SORT_ORDER if c in df_view['club'].unique()]
-        tgt_club = st.selectbox("Analyze Club:", avail)
+        tgt_club = st.selectbox("Analyze Club:", avail, key="acc_club")
         
         subset = df_view[df_view['club'] == tgt_club]
         
@@ -324,82 +426,23 @@ if not master_df.empty:
                 x0=-lat_std*2, y0=avg_carry-long_std*2, x1=lat_std*2, y1=avg_carry+long_std*2,
                 line_color="red", opacity=0.3, line_dash="dot"
             )
-            fig.add_shape(type="circle",
-                x0=-lat_std, y0=avg_carry-long_std, x1=lat_std, y1=avg_carry+long_std,
-                line_color="green", opacity=0.5
-            )
             
-            # Center Line
             fig.add_vline(x=0, line_color="white", opacity=0.1)
             fig.add_hline(y=avg_carry, line_color="white", opacity=0.1, annotation_text="Avg Carry")
             
             fig.update_layout(template="plotly_dark", xaxis_title="Lateral (yds)", yaxis_title="Carry (yds)",
-                              yaxis=dict(scaleanchor="x", scaleratio=1)) # 1:1 Aspect Ratio is crucial for dispersion
+                              yaxis=dict(scaleanchor="x", scaleratio=1)) # 1:1 Aspect Ratio is crucial
             st.plotly_chart(fig, use_container_width=True)
             
-            # Strategy Table
-            c_s1, c_s2 = st.columns(2)
-            with c_s1:
-                st.info(f"""
-                **Strategy Guide for {tgt_club}:**
-                * **Stock Yardage:** {avg_carry:.0f} yds
-                * **Aim Window:** You need **{lat_std*2:.0f} yards** of room left/right to keep 68% of shots in play.
-                * **Long/Short:** Your shots vary by **±{long_std*2:.0f} yards** front-to-back.
-                """)
+            # Strategy Guide
+            st.info(f"""
+            ℹ️ **Strategy Guide for {tgt_club}:**
+            To keep **95%** of your shots in play (Red Circle), you need a window of **{lat_std*4:.0f} yards wide** ({lat_std*2:.0f} yds left/right).
+            Your distance control varies by **±{long_std*2:.0f} yards** front-to-back.
+            """)
 
-    # --- TAB 3: EFFICIENCY LAB (UPDATED PHYSICS) ---
-    with tabs[2]:
-        st.subheader("🚀 Swing Efficiency Lab")
-        st.caption("Are you getting the most out of your speed? (Based on Scratch Player Benchmarks)")
-        
-        e_club = st.selectbox("Check Efficiency:", avail, key="eff_club")
-        e_data = df_view[df_view['club'] == e_club]
-        
-        if not e_data.empty:
-            avg_spd = e_data['Club (mph)'].mean()
-            avg_cry = e_data['Norm_Carry'].mean()
-            curr_loft = my_bag.get(e_club, 30.0)
-            
-            # Use new Interpolated Physics Formula
-            potential = calculate_optimal_carry(avg_spd, curr_loft)
-            eff_pct = (avg_cry / potential) * 100 if potential > 0 else 0
-            
-            # Visuals
-            c_e1, c_e2, c_e3 = st.columns(3)
-            c_e1.metric("Club Speed", f"{avg_spd:.1f} mph")
-            c_e2.metric("Potential Carry", f"{potential:.0f} yds", f"Loft: {curr_loft}°")
-            c_e3.metric("Efficiency", f"{eff_pct:.1f}%", f"{avg_cry - potential:.1f} yds Gap")
-            
-            # Progress Bar color logic
-            color = "#00E676" if eff_pct > 90 else "#FFEB3B" if eff_pct > 80 else "#FF4081"
-            st.markdown(f"""
-            <div class="eff-bg">
-                <div class="eff-fill" style="width: {min(eff_pct, 100)}%; background-color: {color};"></div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if eff_pct < 85:
-                st.warning(f"⚠️ You are losing distance. Your speed ({avg_spd:.0f} mph) should produce {potential:.0f} yds. Check if your Spin is too high or Launch is too low.")
-            else:
-                st.success("✅ Excellent efficiency! You are transferring energy effectively.")
-
-    # --- TAB 4: GAPPING ---
+    # --- TAB 4: TRENDS ---
     with tabs[3]:
-        st.subheader("🎒 Stock Yardages (Normalized)")
-        # Box plot sorted correctly
-        df_view['SortIndex'] = df_view['club'].map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
-        sorted_df = df_view.sort_values('SortIndex')
-        
-        fig_gap = px.box(sorted_df, x='club', y='Norm_Carry', color='club')
-        fig_gap.update_layout(template="plotly_dark", showlegend=False)
-        st.plotly_chart(fig_gap, use_container_width=True)
-        
-        # Simple Table
-        summary = sorted_df.groupby('club')['Norm_Carry'].agg(['mean', 'min', 'max', 'count']).round(1)
-        st.dataframe(summary)
-
-    # --- TAB 5: TRENDS ---
-    with tabs[4]:
         st.subheader("📈 Consistency Trends")
         tr_club = st.selectbox("Track Progress:", avail, key="tr_club")
         metric = st.selectbox("Metric:", ["Ball (mph)", "Norm_Carry", "Lateral_Clean"])
@@ -419,22 +462,116 @@ if not master_df.empty:
         else:
             st.info("Need more than 1 session in the selected timeframe to show a trend.")
 
-    # --- TAB 6: FAQ ---
+    # --- TAB 5: MECHANICS (EFFICIENCY) ---
+    with tabs[4]:
+        st.subheader("🔬 Mechanics & Efficiency")
+        mech_club = st.selectbox("Analyze Club:", avail, key="mech_club")
+        mech_data = df_view[df_view['club'] == mech_club]
+        
+        if not mech_data.empty:
+            # 1. Physics Data
+            col_m1, col_m2, col_m3 = st.columns(3)
+            # Use safe checking
+            if 'AOA (°)' in mech_data.columns:
+                val = mech_data['AOA (°)'].mean()
+                status, color = check_range(mech_club, val, 0, handicap)
+                col_m1.metric("AoA (°)", f"{val:.1f}", status, delta_color=color)
+                tip = get_coach_tip("AoA", status, mech_club)
+                if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
+
+            if 'Spin (rpm)' in mech_data.columns:
+                val = mech_data['Spin (rpm)'].mean()
+                status, color = check_range(mech_club, val, 2, handicap)
+                col_m2.metric("Spin (rpm)", f"{val:.0f}", status, delta_color=color)
+                tip = get_coach_tip("Spin", status, mech_club)
+                if tip: st.markdown(f"<div class='coach-box'>💡 <b>Coach:</b> {tip}</div>", unsafe_allow_html=True)
+
+            # 2. Efficiency Lab
+            if 'Club (mph)' in mech_data.columns and 'Norm_Carry' in mech_data.columns:
+                with st.expander("🚀 Efficiency Lab", expanded=True):
+                    avg_speed = mech_data['Club (mph)'].mean()
+                    avg_carry = mech_data['Norm_Carry'].mean()
+                    curr_loft = my_bag.get(mech_club, 30.0)
+                    
+                    potential = calculate_optimal_carry(avg_speed, curr_loft)
+                    eff_pct = (avg_carry / potential) * 100 if potential > 0 else 0
+                    
+                    st.metric("Efficiency Rating", f"{eff_pct:.1f}%", f"{avg_carry - potential:.1f} yds Gap")
+                    st.markdown(f"""<div class="eff-container"><div class="eff-bar-fill" style="width: {min(eff_pct, 100)}%;"></div></div>""", unsafe_allow_html=True)
+                    
+                    # 3. Consistency Score (New)
+                    # Score based on (Mean / Std Dev). Higher is better.
+                    cons_score = (avg_carry / mech_data['Norm_Carry'].std()) * 2
+                    cons_score = min(100, max(0, cons_score))
+                    st.metric("Consistency Score", f"{cons_score:.0f}/100", "Based on shot grouping")
+
+    # --- TAB 6: COMPARE ---
     with tabs[5]:
-        st.info("ℹ️ **About the Strategy Logic (DECADE Inspired)**")
-        st.markdown("""
-        * **Shotgun Patterns:** The ellipses in the Accuracy tab show where 68% (Green) and 95% (Red) of your shots land. Course management is about shifting this ellipse away from hazards.
-        * **Efficiency Lab:** Uses a custom physics curve based on Loft. It compares your carry to what a Scratch golfer would achieve at your swing speed.
-        * **Normalization:** All data is adjusted to **75°F / 0ft Altitude** by default so winter practice doesn't ruin your confidence.
-        """)
+        st.subheader("⚔️ Session Comparison")
+        comp_club = st.selectbox("Select Club:", avail, key='c_club')
+        club_data = df_view[df_view['club'] == comp_club].copy()
+        
+        # Create labels
+        club_data['Label'] = club_data['Date'].dt.strftime('%Y-%m-%d') + " - " + club_data['Session']
+        unique_sessions = club_data['Label'].unique()
+        
+        if len(unique_sessions) >= 2:
+            c1, c2 = st.columns(2)
+            s_a = c1.selectbox("Session A", unique_sessions, index=0)
+            s_b = c2.selectbox("Session B", unique_sessions, index=1)
+            
+            if s_a != s_b:
+                d_a = club_data[club_data['Label'] == s_a]
+                d_b = club_data[club_data['Label'] == s_b]
+                
+                # Compare Metrics
+                m1, m2 = st.columns(2)
+                diff_carry = d_b['Norm_Carry'].mean() - d_a['Norm_Carry'].mean()
+                diff_acc = abs(d_a['Lateral_Clean'].mean()) - abs(d_b['Lateral_Clean'].mean()) # Positive means B is closer to 0
+                
+                m1.metric("Carry Difference", f"{diff_carry:+.1f}y", "Session B vs A")
+                m2.metric("Accuracy Improvement", f"{diff_acc:+.1f}y", "Closer to center line")
+                
+                # Histogram
+                fig_hist = go.Figure()
+                fig_hist.add_trace(go.Histogram(x=d_a['Norm_Carry'], name='Session A', opacity=0.75))
+                fig_hist.add_trace(go.Histogram(x=d_b['Norm_Carry'], name='Session B', opacity=0.75))
+                fig_hist.update_layout(barmode='overlay', title="Carry Distribution", template="plotly_dark")
+                st.plotly_chart(fig_hist, use_container_width=True)
+        else:
+            st.info("Need at least 2 sessions to compare.")
+
+    # --- TAB 7: FAQ ---
+    with tabs[6]:
+        st.header("❓ Frequently Asked Questions")
+        with st.expander("🧹 What does 'Auto-Clean Outliers' do?"):
+            st.write("It uses the IQR (Interquartile Range) method to remove shots that are statistically improbable for your club, plus physics checks (e.g., 500rpm spin on a driver is an error).")
+        with st.expander("🌤️ How does Normalization work?"):
+            st.write("We adjust your carry distance based on the Temperature and Altitude sliders in the sidebar. This lets you compare winter sessions vs summer sessions fairly.")
+        with st.expander("🎯 What is the 'Shotgun Pattern'?"):
+            st.write("The red circle in the Accuracy tab represents your 95% confidence interval. Strategy experts (like DECADE) suggest aiming this circle away from hazards, rather than aiming at the flag.")
 
 else:
-    # EMPTY STATE
-    st.title("⛳ FS Pro Strategy")
-    st.info("👈 **Start Here:** Upload your FlightScope CSVs in the Sidebar to unlock the Strategy Lab.")
-    st.markdown("### The Four Foundations of This App:")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.markdown("#### 1. Expectation\nKnow your *actual* dispersion, not your best shot.")
-    c2.markdown("#### 2. Strategy\nUse Shotgun patterns to pick smarter targets.")
-    c3.markdown("#### 3. Practice\nTrack strokes gained metrics to fix weaknesses.")
-    c4.markdown("#### 4. Review\nAnalyze trends over time with consistency bands.")
+    # --- WELCOME SCREEN (RESTORED) ---
+    st.markdown("""
+    <div style="text-align: center; padding: 40px 0;">
+        <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            Homegrown FS Pro Analytics
+        </h1>
+        <p style="font-size: 20px; color: #B0B3B8;">Turn your <b>Mevo+</b> data into Tour-level strategy.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.info("🆕 **New User?**")
+        st.markdown("1. Open **Sidebar > 🎒 Bag Setup** to set your lofts.\n2. Use **Sidebar > 📂 Import** to add your first session.")
+    with c2:
+        st.warning("💾 **Returning User?**")
+        st.markdown("Use **Sidebar > 📂 Import > Restore Backup** to load your `mevo_db.csv`.")
+
+    st.markdown("---")
+    c_f1, c_f2, c_f3 = st.columns(3)
+    with c_f1: st.markdown('<div class="feature-card"><h3>🎯 Dispersion Cones</h3><p style="color:#888">Visualize your 95% miss pattern.</p></div>', unsafe_allow_html=True)
+    with c_f2: st.markdown('<div class="feature-card"><h3>🚀 Efficiency Lab</h3><p style="color:#888">Are you maximizing your swing speed?</p></div>', unsafe_allow_html=True)
+    with c_f3: st.markdown('<div class="feature-card"><h3>📈 Consistency Trends</h3><p style="color:#888">Track how your grouping tightens over time.</p></div>', unsafe_allow_html=True)
