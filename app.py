@@ -164,6 +164,19 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 1px;
     }
+    
+    /* Efficiency Bar */
+    .eff-container {
+        background-color: #333;
+        border-radius: 10px;
+        padding: 5px;
+        margin-top: 10px;
+    }
+    .eff-bar-fill {
+        height: 10px;
+        background: linear-gradient(90deg, #FF4081, #00E5FF);
+        border-radius: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,6 +218,7 @@ def get_smart_max(series, df_subset):
     return clean.loc[clean[col_to_use].idxmax(), col_to_use]
 
 def get_dynamic_ranges(club_name, handicap):
+    # SAFELY ACCESS SESSION STATE
     current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
     c_lower = str(club_name).lower()
     tolerance = handicap * 0.1
@@ -234,18 +248,7 @@ def calculate_optimal_carry(club_speed, loft, benchmark="Scratch"):
     """
     Returns estimated CARRY distance based on club head speed and loft.
     Uses an interpolation curve for 'Efficiency (Yards/MPH)' vs 'Loft'.
-    
-    Benchmark:
-    - 'Pro': Assumes ~1.50 max smash (decaying with loft) and optimized launch.
-    - 'Scratch': Assumes ~1.46 max smash (decaying with loft) and solid launch.
     """
-    
-    # 1. Define Efficiency Curve (Yards Carry per MPH Club Speed)
-    # Data points: (Loft, Efficiency)
-    # Driver (10deg): Pro=2.75, Scratch=2.60
-    # 7 Iron (30deg): Pro=2.35, Scratch=2.25
-    # Wedge (50deg): Pro=2.00, Scratch=1.90
-    
     if benchmark == "Tour Pro":
         x_points = [0, 10, 20, 30, 40, 50, 60]
         y_points = [2.90, 2.75, 2.55, 2.35, 2.15, 2.00, 1.70]
@@ -254,7 +257,6 @@ def calculate_optimal_carry(club_speed, loft, benchmark="Scratch"):
         y_points = [2.75, 2.60, 2.45, 2.25, 2.05, 1.90, 1.60]
         
     efficiency_factor = np.interp(loft, x_points, y_points)
-    
     return club_speed * efficiency_factor
 
 @st.cache_data
@@ -365,7 +367,7 @@ with st.sidebar:
         
     with st.expander("👤 Manage Profile"):
         new_name_input = st.text_input("Rename Current Profile:", value=active_user)
-        if st.button("💾 Rename", use_container_width=True):
+        if st.button("💾 Rename"):
             if new_name_input and new_name_input != active_user:
                 if new_name_input in st.session_state['profiles']:
                     st.error("Name already exists!")
@@ -376,7 +378,7 @@ with st.sidebar:
                     st.rerun()
     
     new_create_name = st.text_input("New Profile Name", key="create_new_prof")
-    if st.button("➕ Create New Profile", use_container_width=True):
+    if st.button("➕ Create New Profile"):
         if new_create_name and new_create_name not in st.session_state['profiles']:
             st.session_state['profiles'][new_create_name] = {'df': pd.DataFrame(), 'bag': DEFAULT_LOFTS.copy()}
             st.success(f"Created {new_create_name}")
@@ -387,7 +389,7 @@ with st.sidebar:
     with st.expander(f"📂 Manage Data: {active_user}", expanded=False):
         db_file = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key='db_uploader')
         if db_file:
-            if st.button("🔄 Restore Database", use_container_width=True):
+            if st.button("🔄 Restore Database"):
                 try:
                     restored = pd.read_csv(db_file)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
@@ -403,8 +405,8 @@ with st.sidebar:
         
         if not master_df.empty:
             csv_data = master_df.to_csv(index=False).encode('utf-8')
-            st.download_button("💾 Save Database", csv_data, f"{active_user}_mevo_db.csv", "text/csv", use_container_width=True)
-            if st.button("🗑️ Clear All", use_container_width=True):
+            st.download_button("💾 Save Database", csv_data, f"{active_user}_mevo_db.csv", "text/csv")
+            if st.button("🗑️ Clear All"):
                 st.session_state['profiles'][active_user]['df'] = pd.DataFrame()
                 st.rerun()
 
@@ -412,7 +414,7 @@ with st.sidebar:
     import_date = st.date_input("Date of Session")
     uploaded_files = st.file_uploader("Upload CSVs", accept_multiple_files=True, type='csv', key=f"uploader_{import_date}")
     
-    if st.button("➕ Add to Database", use_container_width=True):
+    if st.button("➕ Add to Database"):
         if uploaded_files:
             new_data = []
             for f in uploaded_files:
@@ -445,11 +447,11 @@ with st.sidebar:
         
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("💾 Save", type="primary", use_container_width=True):
+            if st.button("💾 Save", type="primary"):
                 st.session_state['profiles'][active_user]['bag'][selected_club] = new_loft
                 st.toast(f"Saved for {active_user}", icon="✅")
         with c2:
-            if st.button("🔄 Reset", type="secondary", use_container_width=True):
+            if st.button("🔄 Reset", type="secondary"):
                 st.session_state['profiles'][active_user]['bag'] = DEFAULT_LOFTS.copy()
                 st.rerun()
             
@@ -511,13 +513,16 @@ if not master_df.empty:
     elif env_mode == "Indoor Only" and 'Mode' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['Mode'].str.contains("Indoor", case=False, na=False)]
     
+    # FILTER 1: SMASH CAP
     filtered_df = filtered_df[filtered_df['Smash'] <= smash_cap].copy()
 
+    # FILTER 2: OUTLIER CLEANING
     if remove_bad_shots:
         filtered_df, dropped_count = filter_outliers(filtered_df)
         if dropped_count > 0: st.toast(f"Cleaned {dropped_count} outliers", icon="🧹")
 
-    # APPLY NORMALIZATION
+    # APPLY NORMALIZATION (Safe copy)
+    filtered_df = filtered_df.copy() # Explicit copy before creating new columns to silence pandas warning
     filtered_df['Norm_Carry'] = filtered_df['SL_Carry'] * total_norm_factor
     filtered_df['Norm_Total'] = filtered_df['SL_Total'] * total_norm_factor
 
@@ -565,44 +570,37 @@ if not master_df.empty:
     # ================= TAB: MY BAG =================
     with tab_bag:
         st.subheader(f"🎒 My Bag & Yardages (Normalized to {sim_temp}°F)")
-        
-        stats = filtered_df.groupby('club').agg({
-            'Norm_Carry': 'mean',
-            'Norm_Total': 'mean',
-            'Ball (mph)': 'mean',
-            'club': 'count'
-        }).rename(columns={'club': 'Count'})
-        
-        ranges = filtered_df.groupby('club')['Norm_Carry'].quantile([0.20, 0.80]).unstack()
-        
-        valid_max_df = filtered_df[
-            (filtered_df['Smash'].between(1.0, 1.58)) & 
-            (filtered_df['Spin (rpm)'] > 500) & 
-            (filtered_df['Height (ft)'] > 8)
-        ]
-        if not valid_max_df.empty:
-            smart_maxes = valid_max_df.groupby('club')['Norm_Carry'].max()
-        else:
-            smart_maxes = pd.Series(dtype=float)
+        bag_data = []
+        for club in filtered_df['club'].unique():
+            subset = filtered_df[filtered_df['club'] == club]
+            s_max = get_smart_max(subset['Norm_Carry'], subset)
             
-        bag_view = stats.join(ranges).join(smart_maxes.rename("Max Carry"))
-        bag_view['SortIndex'] = bag_view.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
-        bag_view = bag_view.sort_values('SortIndex')
+            p20 = subset['Norm_Carry'].quantile(0.20)
+            p80 = subset['Norm_Carry'].quantile(0.80)
+            
+            bag_data.append({
+                'Club': club, 'Norm_Carry': subset['Norm_Carry'].mean(), 'Norm_Total': subset['Norm_Total'].mean(),
+                'Ball Speed': subset['Ball (mph)'].mean(), 'Max Carry': s_max, 'Count': len(subset),
+                'Range_Min': p20, 'Range_Max': p80
+            })
+        
+        bag_stats = pd.DataFrame(bag_data).set_index('Club')
+        bag_stats['SortIndex'] = bag_stats.index.map(lambda x: CLUB_SORT_ORDER.index(x) if x in CLUB_SORT_ORDER else 99)
+        bag_stats = bag_stats.sort_values('SortIndex')
         
         st.write("---")
         cols = st.columns(4)
-        for i, (club_name, row) in enumerate(bag_view.iterrows()):
+        for i, (index, row) in enumerate(bag_stats.iterrows()):
             with cols[i % 4]:
-                s_max = row['Max Carry'] if not pd.isna(row['Max Carry']) else row['Norm_Carry']
                 st.markdown(f"""
                 <div style="background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; margin-bottom: 10px;">
-                    <h3 style="margin:0; color: #4DD0E1;">{club_name}</h3>
+                    <h3 style="margin:0; color: #4DD0E1;">{index}</h3>
                     <h2 style="margin:0; font-size: 32px; color: #FFF;">{row['Norm_Carry']:.0f}<span style="font-size:16px; color:#888"> yds</span></h2>
-                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row[0.2]:.0f} - {row[0.8]:.0f}</div>
+                    <div style="font-size: 14px; color: #00E5FF; margin-bottom: 5px; font-weight: 500;">Range: {row['Range_Min']:.0f} - {row['Range_Max']:.0f}</div>
                     <hr style="border-color: #444; margin: 8px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; color: #888;">
-                        <span>Speed: {row['Ball (mph)']:.0f}</span>
-                        <span style="color: #FFD700;">Pot: {s_max:.0f}</span>
+                        <span>Speed: {row['Ball Speed']:.0f}</span>
+                        <span style="color: #FFD700;">Pot: {row['Max Carry']:.0f}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
