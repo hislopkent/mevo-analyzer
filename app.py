@@ -26,12 +26,16 @@ st.markdown("""
         background-color: #262730 !important; color: #FAFAFA !important; border: 1px solid #444 !important;
     }
 
-    /* 3. IMPROVED EXPANDERS */
+    /* 3. IMPROVED EXPANDERS (Sidebar & Main) - FORCE DARK & WHITE TEXT */
     div[data-testid="stExpander"] {
         background-color: #262730 !important;
         border: 1px solid #444 !important;
         border-radius: 8px !important;
         margin-bottom: 12px !important;
+        color: #FAFAFA !important;
+    }
+    div[data-testid="stExpander"] summary {
+        color: #FAFAFA !important;
     }
     div[data-testid="stExpander"] summary p {
         color: #FAFAFA !important;
@@ -41,6 +45,10 @@ st.markdown("""
     div[data-testid="stExpander"] summary svg {
         fill: #FAFAFA !important;
         color: #FAFAFA !important;
+    }
+    /* Fix internal content of expanders to be white text */
+    div[data-testid="stExpander"] div[data-testid="stMarkdownContainer"] p {
+        color: #E0E0E0 !important;
     }
 
     /* 4. METRIC CARDS */
@@ -156,11 +164,6 @@ def clean_mevo_data(df, filename, selected_date):
 
 @st.cache_data
 def filter_outliers(df):
-    """
-    Filters outliers based on Physics and IQR.
-    Returns: (Cleaned DataFrame, Count of dropped rows)
-    """
-    # 1. Physics Check
     mask_physics = (
         (df['Smash'] >= 1.0) & 
         (df['Smash'] <= 1.58) &
@@ -171,7 +174,6 @@ def filter_outliers(df):
     dropped_physics = len(df) - len(df_phys)
     
     if not df_phys.empty:
-        # 2. IQR Check
         groups = df_phys.groupby('club')['SL_Carry']
         Q1 = groups.transform(lambda x: x.quantile(0.25))
         Q3 = groups.transform(lambda x: x.quantile(0.75))
@@ -185,9 +187,10 @@ def filter_outliers(df):
         return df_phys, dropped_physics
 
 def check_range(club_name, value, metric_idx, handicap):
-    current_bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
+    # Retrieve current bag directly from session state to ensure freshness
+    bag = st.session_state['profiles'][st.session_state['active_user']]['bag']
     c_lower = str(club_name).lower()
-    user_loft = current_bag.get(club_name, 30.0)
+    user_loft = bag.get(club_name, 30.0)
     launch_help = 0 if handicap < 5 else 2.0
 
     if 'driver' in c_lower:
@@ -269,29 +272,38 @@ with st.sidebar:
                     if not master_df.empty and f.name.replace('.csv','') in master_df['Session'].unique(): continue
                     raw = pd.read_csv(f)
                     clean = clean_mevo_data(raw, f.name, import_date)
-                    clean['Ref Loft'] = clean['club'].map(my_bag)
+                    clean['Ref Loft'] = clean['club'].map(my_bag) # Save loft at time of import
                     new_list.append(clean)
                 except: pass
             if new_list:
                 st.session_state['profiles'][active_user]['df'] = pd.concat([master_df, pd.concat(new_list)], ignore_index=True)
                 st.rerun()
 
-    # RESTORE / BACKUP
+    # RESTORE / BACKUP (Improved Logic)
     with st.expander("💾 Backup & Restore"):
-        # Restore
         db_restore = st.file_uploader("Restore 'mevo_db.csv'", type='csv', key="restore_uploader")
         if db_restore:
             if st.button("🔄 Overwrite Database"):
                 try:
                     restored = pd.read_csv(db_restore)
                     if 'Date' in restored.columns: restored['Date'] = pd.to_datetime(restored['Date'])
+                    
+                    # 1. Restore Data
                     st.session_state['profiles'][active_user]['df'] = restored
-                    st.success("Database Restored Successfully!")
+                    
+                    # 2. Restore Lofts (Extract latest 'Ref Loft' for each club)
+                    if 'Ref Loft' in restored.columns:
+                        latest_lofts = restored.groupby('club')['Ref Loft'].last().dropna().to_dict()
+                        if latest_lofts:
+                            st.session_state['profiles'][active_user]['bag'].update(latest_lofts)
+                            st.success("Data & Bag Settings Restored!")
+                    else:
+                        st.success("Data Restored (No Loft info found in file).")
+                        
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
         
-        # Backup
         if not master_df.empty:
             st.download_button("💾 Download Backup", master_df.to_csv(index=False), f"{active_user}_db.csv")
             if st.button("🗑️ Clear Database"):
@@ -301,7 +313,7 @@ with st.sidebar:
     # --- SETTINGS ---
     st.markdown("---")
     with st.expander("⚙️ Settings & Normalization"):
-        # RESTORED MISSING INPUTS HERE
+        # Inputs required for logic
         env_mode = st.radio("Filter Mode:", ["All", "Outdoor Only", "Indoor Only"], index=0)
         handicap = st.number_input("Handicap", 0, 54, 15)
         
@@ -454,14 +466,20 @@ if not master_df.empty:
 
             c_chart1, c_chart2 = st.columns([3, 1])
             with c_chart1:
+                # FIXED: Improved visibility of "The Cone"
                 fig = px.scatter(subset, x='Lateral_Clean', y='Norm_Carry', color='Smash',
                     hover_data=['Date', 'Smash', 'Spin (rpm)'], title=f"Dispersion: {tgt_club}")
+                
+                # Bright Red, Thicker Line, Light Fill
                 fig.add_shape(type="circle",
                     x0=-lat_std*2, y0=avg_carry-long_std*2, x1=lat_std*2, y1=avg_carry+long_std*2,
-                    line_color="red", opacity=0.3, line_dash="dot"
+                    line=dict(color="#FF1744", width=3, dash="dot"), # High visibility
+                    fillcolor="rgba(255, 23, 68, 0.15)", # Slight red tint
+                    opacity=0.9
                 )
-                fig.add_vline(x=0, line_color="white", opacity=0.1)
-                fig.add_hline(y=avg_carry, line_color="white", opacity=0.1)
+                
+                fig.add_vline(x=0, line_color="white", opacity=0.3)
+                fig.add_hline(y=avg_carry, line_color="white", opacity=0.3)
                 fig.update_layout(yaxis=dict(scaleanchor="x", scaleratio=1), template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True)
             with c_chart2:
@@ -558,7 +576,7 @@ if not master_df.empty:
         with st.expander("🎯 Strategy Circles"): st.write("Red circle = 95% Miss Pattern. Aim this away from trouble.")
 
 else:
-    # --- WELCOME SCREEN (RESTORED) ---
+    # --- WELCOME SCREEN ---
     st.markdown("""
     <div style="text-align: center; padding: 40px 0;">
         <h1 style="font-size: 60px; font-weight: 700; background: -webkit-linear-gradient(45deg, #00E5FF, #FF4081); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
